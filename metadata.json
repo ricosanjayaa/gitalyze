@@ -1,0 +1,5 @@
+{
+  "name": "Github Analytics",
+  "description": "A comprehensive dashboard to visualize GitHub user and repository analytics, including profile score, stars, forks, language distribution, and growth trends. Optimize your GitHub presence with data-driven insights.",
+  "requestFramePermissions": []
+}
