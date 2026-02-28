@@ -33,7 +33,7 @@ export async function generateMetadata({
   try {
     const user = (await fetchGitHubUser(username)) as GitHubUser;
     const displayName = user.name ?? user.login;
-    const title = `${displayName} · ${metadataJson.name}`;
+    const title = `${displayName}`;
     const description = `${displayName}'s GitHub profile analytics and score breakdown.`;
     return {
       title,
@@ -49,7 +49,7 @@ export async function generateMetadata({
       },
     };
   } catch {
-    const title = `Dashboard · ${metadataJson.name}`;
+    const title = "Dashboard";
     return {
       title,
       description: metadataJson.description,

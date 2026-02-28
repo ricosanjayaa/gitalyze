@@ -1,6 +1,8 @@
 import type { MetadataRoute } from "next";
 import { getSiteUrl } from "@/lib/site-url";
 
+export const revalidate = 86400;
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = getSiteUrl();
 
@@ -14,4 +16,3 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: path === "/" ? 0.9 : 0.3,
   }));
 }
-

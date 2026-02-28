@@ -13,7 +13,7 @@ export async function generateMetadata({
 
   try {
     const repo = await fetchRepoDetail(owner, repoName);
-    const title = `${repo.name} by ${repo.owner?.login ?? owner} · ${metadataJson.name}`;
+    const title = `${repo.name} by ${repo.owner?.login ?? owner}`;
     const description = repo.description ?? `Detailed analytics for ${repo.full_name}.`;
 
     return {
@@ -29,7 +29,7 @@ export async function generateMetadata({
     };
   } catch {
     return {
-      title: `Repository · ${metadataJson.name}`,
+      title: "Repository",
       description: metadataJson.description,
       alternates: { canonical },
     };

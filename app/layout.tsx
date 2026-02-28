@@ -9,7 +9,7 @@ const metadataBase = new URL(getSiteUrl());
 export const metadata: Metadata = {
   title: {
     default: siteMetadataJson.name,
-    template: `%s · ${siteMetadataJson.name}`,
+    template: `%s | ${siteMetadataJson.name}`,
   },
   description: siteMetadataJson.description,
   applicationName: siteMetadataJson.name,
@@ -18,7 +18,10 @@ export const metadata: Metadata = {
     canonical: "/",
   },
   openGraph: {
-    title: siteMetadataJson.name,
+    title: {
+      default: siteMetadataJson.name,
+      template: `%s | ${siteMetadataJson.name}`,
+    },
     description: siteMetadataJson.description,
     url: "/",
     type: "website",
