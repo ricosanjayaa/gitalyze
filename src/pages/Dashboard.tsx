@@ -224,16 +224,16 @@ export default function Dashboard() {
         </div>
 
         {/* --- Middle Section: Top Repos & Languages --- */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 min-h-[400px]">
           
           {/* Top Repositories */}
-          <Card className="lg:col-span-2 bg-card border-border/30 shadow-sm rounded-lg flex flex-col">
-            <CardHeader className="px-5 py-3 border-b border-border/30">
+          <Card className="lg:col-span-2 bg-card border-border/30 shadow-sm rounded-lg flex flex-col h-full max-h-[400px]">
+            <CardHeader className="px-5 py-3 border-b border-border/30 shrink-0">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Top repositories</CardTitle>
             </CardHeader>
-            <CardContent className="p-0 flex flex-col">
-              <div className="divide-y divide-border/30 flex-1">
-                {topRepos.map((repo, i) => (
+            <CardContent className="p-0 flex flex-col h-full overflow-hidden items-stretch">
+              <div className="divide-y divide-border/30 overflow-y-auto flex-1 custom-scrollbar flex flex-col min-h-0">
+                {topRepos.slice(0, 8).map((repo, i) => (
                   <TooltipProvider key={repo.id || i}>
                     <UITooltip>
                       <TooltipTrigger asChild>
@@ -293,26 +293,28 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-              <a 
-                href={`https://github.com/${username}?tab=repositories`} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex items-center justify-center px-6 py-4 border-t border-border/30 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors gap-1.5"
-              >
-                <span className="font-sans">View all repositories</span> <ExternalLink className="w-3 h-3" />
-              </a>
+              {user.public_repos > 8 && (
+                <a 
+                  href={`https://github.com/${username}?tab=repositories`} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center px-6 py-4 border-t border-border/30 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors gap-1.5 shrink-0"
+                >
+                  <span className="font-sans">View all repositories</span> <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
             </CardContent>
           </Card>
 
           {/* Languages - Monotone Rounded Donut Chart */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col min-h-[300px] max-h-[400px] h-full">
             <CardHeader className="px-5 py-3 border-b border-border/30">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Languages</CardTitle>
             </CardHeader>
-            <CardContent className="p-4 flex-1 grid grid-rows-[1fr_auto] gap-4">
+            <CardContent className="p-4 grid grid-rows-[auto_auto] gap-4 h-full overflow-hidden">
               {languageData.length > 0 ? (
                 <>
-                  <div className="relative min-h-[250px]">
+                  <div className="relative h-[180px] sm:h-[200px] md:h-[220px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
@@ -360,7 +362,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   
-                  <div className="w-full mt-4 space-y-2">
+                  <div className="w-full mt-2 space-y-2 max-h-[100px] overflow-y-auto pr-1 custom-scrollbar">
                     {languageData.map((lang, i) => {
                       const total = languageData.reduce((acc, curr) => acc + curr.value, 0);
                       const percent = Math.round((lang.value / total) * 100);
@@ -411,7 +413,7 @@ export default function Dashboard() {
                   else if (percentage >= 40) barColor = "#f97316"; // Orange (Medium)
 
                   return (
-                                        <div key={key} className="space-y-1.5 group cursor-default">
+                    <div key={key} className="space-y-1.5 group cursor-default">
                       <div className="flex items-center justify-between text-[10px]">
                         <span className="uppercase font-medium text-muted-foreground group-hover:text-foreground transition-colors tracking-wider font-sans">
                           {key}

@@ -230,7 +230,7 @@ export function useGithubAnalytics(username: string | undefined) {
   }, [repos]);
 
   const topRepos = useMemo(() => 
-    [...repos].sort((a, b) => b.stargazers_count - a.stargazers_count).slice(0, 5), 
+    [...repos].sort((a, b) => b.stargazers_count - a.stargazers_count).slice(0, 8), 
   [repos]);
 
   const growthData = useMemo(() => {
