@@ -13,6 +13,9 @@ export const metadata: Metadata = {
   },
   description: siteMetadataJson.description,
   applicationName: siteMetadataJson.name,
+  verification: {
+    google: "bxMOApuAcwtwMKB9mCQmf-bjHE-MtRePe65UmgwopJk",
+  },
   metadataBase,
   alternates: {
     canonical: "/",
