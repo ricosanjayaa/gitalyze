@@ -9,7 +9,7 @@ export default defineConfig(({mode}) => {
   return {
     plugins: [{ enforce: 'pre', ...mdx() }, react(), tailwindcss()],
     define: {
-      'process.env.OPENROUTER_API_KEY': JSON.stringify(env.OPENROUTER_API_KEY),
+      // API key is no longer exposed to client - only available server-side
     },
     resolve: {
       alias: {

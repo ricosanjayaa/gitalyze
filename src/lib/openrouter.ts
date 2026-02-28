@@ -1,117 +1,218 @@
 import { ScoreBreakdown } from "./scoring";
 import { GitHubUser, GitHubRepo } from "./github";
+import { generateRecommendations } from "./recommendation";
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_API_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = 'stepfun/step-3.5-flash:free';
+// small type re-exports for server usage
+export type { ScoreBreakdown, GitHubUser, GitHubRepo };
 
+function getOpenRouterConfig() {
+  return {
+    apiKey: process.env.OPENROUTER_API_KEY,
+    endpoint: process.env.OPENROUTER_API_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions',
+    model: process.env.OPENROUTER_MODEL || 'stepfun/step-3.5-flash:free',
+    timeoutMS: Number(process.env.OPENROUTER_TIMEOUT_MS) || 12000,
+    maxRetries: Number(process.env.OPENROUTER_MAX_RETRIES) || 2,
+  };
+}
+
+function truncate(s: string | null | undefined, n = 140) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1).trim() + '…' : s;
+}
+
+function sleep(ms: number) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+// Minimal, robust OpenRouter caller that keeps prompts small and dynamic.
 export async function getAIRecoomendations(
-  breakdown: ScoreBreakdown, 
-  user: GitHubUser, 
+  breakdown: ScoreBreakdown,
+  user: GitHubUser,
   repos: GitHubRepo[]
 ): Promise<string[]> {
-  const prompt = `
-    You are a strict GitHub profile evaluator and optimization expert.
+  const cfg = getOpenRouterConfig();
+  if (!cfg.apiKey) throw { code: 'MISSING_API_KEY', message: 'OPENROUTER_API_KEY not set.' };
 
-    Your task is to generate improvement recommendations ONLY for weak areas based on the provided data.
+  // Prepare a compact summary
+  const top = (repos || [])
+    .sort((a, b) => (b.stargazers_count || 0) - (a.stargazers_count || 0))
+    .slice(0, 3)
+    .map(r => `${r.name} (${r.stargazers_count || 0}★): ${truncate(r.description, 80)}`)
+    .join(' | ');
 
-    CRITICAL RULES:
+  const summary = [
+    `Name: ${user.name || user.login}`,
+    `Followers: ${user.followers ?? 0}`,
+    `Public repos: ${user.public_repos ?? 0}`,
+    `Top: ${top || 'none'}`,
+    `Scores: A${Math.round(breakdown.activity || 0)} Q${Math.round(breakdown.quality || 0)} V${Math.round(breakdown.volume || 0)} D${Math.round(breakdown.diversity || 0)} C${Math.round(breakdown.completeness || 0)} M${Math.round(breakdown.maturity || 0)}`,
+  ].join(' | ');
 
-    1. Only recommend improvements for sections with LOW scores.
-      - If a score is >= 70% of its maximum, DO NOT suggest improvements for it.
-      - If a profile field already exists, DO NOT suggest adding it.
+  // Determine weak areas (threshold: less than 70% of category max)
+  const maxima: Record<string, number> = { activity: 25, quality: 30, volume: 15, diversity: 10, completeness: 10, maturity: 10 };
+  const weakAreas = Object.entries(maxima)
+    .filter(([k, max]) => (breakdown as any)[k] < Math.round(max * 0.7))
+    .map(([k]) => k);
 
-    2. Never give generic advice.
-      - Every recommendation must directly relate to the provided data.
-      - Do not assume missing information unless explicitly stated.
-
-    3. If all sections are strong, return:
-      []
-
-    4. Generate 3–4 recommendations maximum.
-
-    5. Each recommendation:
-      - One sentence only
-      - Maximum 20 words
-      - Start with a strong verb (Add, Improve, Increase, Pin, Enhance, Expand, Strengthen, Optimize, Document, Engage)
-      - Professional, concise, and constructive tone
-      - No criticism, only forward-looking advice
-
-    6. Output format:
-      - Return ONLY a valid JSON array of strings
-      - No explanation
-      - No markdown
-      - No extra text
-
-    --------------------------------------------------
-
-    USER DATA:
-
-    Name: ${user.name || user.login}
-    Bio: ${user.bio || 'Not provided'}
-    Location: ${user.location || 'Not provided'}
-    Website: ${user.blog || 'Not provided'}
-    Followers: ${user.followers}
-    Public Repos: ${user.public_repos}
-
-    SCORES:
-    Activity: ${breakdown.activity.toFixed(0)} / 25
-    Quality: ${breakdown.quality.toFixed(0)} / 30
-    Volume: ${breakdown.volume.toFixed(0)} / 15
-    Diversity: ${breakdown.diversity.toFixed(0)} / 10
-    Completeness: ${breakdown.completeness.toFixed(0)} / 10
-
-    TOP REPOSITORIES:
-    ${repos.sort((a, b) => b.stargazers_count - a.stargazers_count).slice(0, 3).map(r => `- ${r.name} (${r.stargazers_count} stars): ${r.description || 'No description'}`).join('\n')}
-
-    --------------------------------------------------
-
-    Return the JSON array now.
-  `;
-
-  try {
-    if (!OPENROUTER_API_KEY) {
-      throw new Error('OPENROUTER_API_KEY is not defined.');
-    }
-
-    const response = await fetch(OPENROUTER_API_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: OPENROUTER_MODEL,
-        messages: [
-          { role: 'system', content: 'You are a strict GitHub profile evaluator and optimization expert. Your task is to generate improvement recommendations ONLY for weak areas based on the provided data. Return ONLY a valid JSON array of strings. No explanation, no markdown, no extra text.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ message: 'Unknown OpenRouter API error' }));
-      throw new Error(`OpenRouter API error: ${response.status} - ${errorData.message || JSON.stringify(errorData)}`);
-    }
-
-    const data = await response.json();
-    const text = data.choices[0]?.message?.content?.trim();
-
-    if (!text) {
-      throw new Error('OpenRouter API returned an empty or malformed response.');
-    }
-
-    const recommendations = JSON.parse(text);
-    return recommendations as string[];
-
-  } catch (error) {
-    console.error("Error fetching AI recommendations:", error);
-    // Fallback to static recommendations on error
-    return [
-      "Consider contributing to an open-source project that uses your top languages.",
-      "Engage with the community by opening issues or pull requests.",
-      "Make sure your top repositories have descriptive README files."
-    ];
+  if (!weakAreas.length) {
+    // No weak areas — don't call the model unnecessarily
+    return [];
   }
+
+  // Concise instructions: ask for 1-sentence recommendations of decent length (8-18 words)
+  const system = 'You are a concise GitHub profile advisor. Return ONLY a JSON array of improvement sentences.';
+  const userMsg = `Data: ${summary}. Weak areas: ${weakAreas.join(', ')}. Suggest 1-3 focused improvements per weak area, total 2-4 recommendations. Each recommendation: one sentence, 8-18 words, start with an action verb. Do NOT suggest improvements for areas not listed.`;
+
+  const maxAttempts = cfg.maxRetries + 1;
+  let lastErr: any = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), cfg.timeoutMS);
+    try {
+      const res = await fetch(cfg.endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${cfg.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: cfg.model,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userMsg }
+          ],
+          temperature: 0.6,
+          max_tokens: 180,
+        }),
+        signal: ac.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        lastErr = { status: res.status, details: errData };
+
+        // If rate-limited, do NOT auto-retry - surface the retry info to the caller
+        if (res.status === 429) {
+          const retryAfterHeader = res.headers?.get ? res.headers.get('retry-after') : null;
+          const retryAfter = retryAfterHeader ? (parseInt(retryAfterHeader, 10) || 60) : 60; // default to 60s if missing
+          throw { code: 'RATE_LIMIT', message: errData.message || 'OpenRouter rate limit exceeded', status: 429, details: { retryAfter } };
+        }
+
+        // For server errors, allow a single retry
+        if (res.status >= 500 && attempt < maxAttempts) {
+          const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 8000) + Math.random() * 1000;
+          await sleep(backoff);
+          continue;
+        }
+
+        throw { code: 'OPENROUTER_API_ERROR', message: errData.message || `HTTP ${res.status}`, status: res.status, details: errData };
+      }
+
+      const body = await res.json();
+      // Robustly extract text from various AI response shapes (different providers/models)
+      const extractText = (b: any): string => {
+        if (!b) return '';
+        const c = b.choices?.[0];
+        if (!c) return '';
+        if (typeof c === 'string') return c;
+        if (c?.message?.content) return c.message.content;
+        if (typeof c?.text === 'string') return c.text;
+        if (typeof c?.content === 'string') return c.content;
+        if (Array.isArray(c) && c.length > 0 && typeof c[0] === 'string') return c[0];
+        // fallback to any top-level field that might contain text
+        if (typeof b?.text === 'string') return b.text;
+        return '';
+      };
+      const text = extractText(body);
+
+      // Robust parsing strategy:
+      // 1) Try direct JSON parse
+      // 2) Extract first JSON array substring
+      // 3) Convert bullet/numbered/plain sentence lists into an array
+      let arr: string[] | null = null;
+
+      // 1) direct JSON
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) arr = parsed.map((s: any) => String(s));
+        else if (typeof parsed === 'object' && parsed !== null) {
+          // if an object with a field that looks like suggestions, try to find an array
+          const vals = Object.values(parsed).find(v => Array.isArray(v));
+          if (Array.isArray(vals)) arr = (vals as any[]).map(s => String(s));
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // 2) extract JSON array substring
+      if (!arr) {
+        const m = text.match(/\[[\s\S]*?\]/);
+        if (m) {
+          try {
+            const parsed = JSON.parse(m[0]);
+            if (Array.isArray(parsed)) arr = parsed.map((s: any) => String(s));
+          } catch (e) {
+            // ignore
+          }
+        }
+      }
+
+      // 3) fallback: parse as lines/bullets
+      if (!arr) {
+        const lines = text
+          .split(/\r?\n|\u2022|\u2023|\u25E6|\u2043/) // split on newlines and common bullet chars
+          .map(l => l.replace(/^\s*[-*\d\.\)\s]+/, '').trim())
+          .filter(Boolean);
+
+        if (lines.length) {
+          // If the model returned a single paragraph with multiple sentences separated by periods
+          if (lines.length === 1) {
+            const sentences = lines[0].split(/(?<=\.|\?|\!)\s+/).map(s => s.trim()).filter(Boolean);
+            if (sentences.length > 1) arr = sentences;
+          }
+          // Otherwise treat each line as one recommendation
+          if (!arr && lines.length > 0) arr = lines;
+        }
+      }
+
+      if (!arr || !Array.isArray(arr) || arr.length === 0) {
+        // Graceful fallback: no recommendations can be parsed from the response
+        return [];
+      }
+
+      // Normalize and limit
+      const normalized = arr.map(s => s.replace(/^[-•\d\.\)\s]+/, '').trim()).filter(Boolean).slice(0, 4);
+      return normalized;
+
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') lastErr = { code: 'TIMEOUT', message: 'timeout' };
+      else lastErr = err;
+      const retryable = lastErr && (lastErr.code === 'TIMEOUT' || (lastErr.status && lastErr.status >= 500));
+      if (attempt < maxAttempts && retryable) { await sleep(400 * attempt); continue; }
+      throw lastErr;
+    }
+  }
+  throw { code: 'OPENROUTER_FAILED', message: 'requests failed' };
+}
+
+export async function getAIRecommendations(
+  breakdown: ScoreBreakdown,
+  user: GitHubUser,
+  repos: GitHubRepo[]
+): Promise<string[]> {
+  return getAIRecoomendations(breakdown, user, repos);
+}
+
+// Lightweight recommendation plan when scores are low (no UI changes)
+export function getRemediationPlan(
+  breakdown: ScoreBreakdown,
+  user: GitHubUser,
+  repos: GitHubRepo[]
+): string[] {
+  const plan = generateRecommendations(breakdown, user, repos);
+  return plan.map(p =>
+    `${p.text} — Justification: ${p.rationale ?? 'No rationale provided.'} This action addresses the identified signal weaknesses and is anticipated to yield a measurable uplift in the corresponding score within the next measurement cycle. It should be implemented as part of a phased plan with clearly defined KPIs, milestones, and owner accountability.`
+  );
 }

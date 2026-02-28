@@ -1,90 +1,197 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { ScoreBreakdown } from "./scoring";
-import { GitHubUser, GitHubRepo } from "./github";
+import { ScoreBreakdown } from './scoring';
+import { GitHubUser, GitHubRepo } from './github';
 
-export async function getAIRecoomendations(
-  breakdown: ScoreBreakdown, 
-  user: GitHubUser, 
-  repos: GitHubRepo[]
-): Promise<string[]> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export interface RecommendationItem {
+  id: string;
+  text: string;
+  category: string;
+  impact: number;
+  effort: number;
+  prerequisites?: string[];
+  targetDeficiencies?: string[];
+  rationale?: string;
+}
 
-  const prompt = `
-    You are a strict GitHub profile evaluator and optimization expert.
-
-    Your task is to generate improvement recommendations ONLY for weak areas based on the provided data.
-
-    CRITICAL RULES:
-
-    1. Only recommend improvements for sections with LOW scores.
-      - If a score is >= 70% of its maximum, DO NOT suggest improvements for it.
-      - If a profile field already exists, DO NOT suggest adding it.
-
-    2. Never give generic advice.
-      - Every recommendation must directly relate to the provided data.
-      - Do not assume missing information unless explicitly stated.
-
-    3. If all sections are strong, return an empty array.
-
-    4. Generate 3–4 recommendations maximum.
-
-    5. Each recommendation:
-      - One sentence only
-      - Maximum 20 words
-      - Start with a strong verb (Add, Improve, Increase, Pin, Enhance, Expand, Strengthen, Optimize, Document, Engage)
-      - Professional, concise, and constructive tone
-      - No criticism, only forward-looking advice
-
-    --------------------------------------------------
-
-    USER DATA:
-
-    Name: ${user.name || user.login}
-    Bio: ${user.bio || 'Not provided'}
-    Location: ${user.location || 'Not provided'}
-    Website: ${user.blog || 'Not provided'}
-    Followers: ${user.followers}
-    Public Repos: ${user.public_repos}
-
-    SCORES:
-    Activity: ${breakdown.activity.toFixed(0)} / 25
-    Quality: ${breakdown.quality.toFixed(0)} / 30
-    Volume: ${breakdown.volume.toFixed(0)} / 15
-    Diversity: ${breakdown.diversity.toFixed(0)} / 10
-    Completeness: ${breakdown.completeness.toFixed(0)} / 10
-
-    TOP REPOSITORIES:
-    ${repos.sort((a, b) => b.stargazers_count - a.stargazers_count).slice(0, 3).map(r => `- ${r.name} (${r.stargazers_count} stars): ${r.description || 'No description'}`).join('\n')}
-
-    --------------------------------------------------
-  `;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.STRING,
-          },
-        },
-      },
-    });
-
-    const text = response.text;
-    if (!text) return [];
-
-    const recommendations = JSON.parse(text);
-    return Array.isArray(recommendations) ? recommendations : [];
-
-  } catch (error: any) {
-    console.error("Gemini API error:", error);
-    if (error.message?.includes("429") || error.message?.includes("limit")) {
-      throw new Error("API has reached its limit, please try again later.");
-    }
-    throw new Error("Something went wrong while generating recommendations.");
+const RECOMMENDATION_CATALOG: RecommendationItem[] = [
+  {
+    id: 'add_more_repos',
+    text: 'Add more repositories to increase portfolio diversity',
+    category: 'Diversity',
+    impact: 0.9,
+    effort: 0.4,
+    targetDeficiencies: ['diversity'],
+    rationale: 'Diversification of the repository portfolio reduces risk of single-point underperformance and broadens demonstrated capabilities; expanding coverage is likely to improve diversity and overall credibility.'
+  },
+  {
+    id: 'update_profile',
+    text: 'Complete profile details: bio, location, blog, email, and name',
+    category: 'Completeness',
+    impact: 0.8,
+    effort: 0.1,
+    targetDeficiencies: ['completeness'],
+    rationale: 'Profile completeness signals professionalism and attention to detail, directly improving the Completeness score while enhancing discoverability.'
+  },
+  {
+    id: 'add_readme',
+    text: 'Add or improve README files with clear descriptions, usage instructions, and examples',
+    category: 'Quality',
+    impact: 0.7,
+    effort: 0.3,
+    targetDeficiencies: ['quality', 'completeness'],
+    rationale: 'Well-documented repositories demonstrate engineering maturity and user empathy, positively impacting quality signals.'
+  },
+  {
+    id: 'add_topics',
+    text: 'Add relevant topics/tags to repositories to improve discoverability',
+    category: 'Completeness',
+    impact: 0.5,
+    effort: 0.2,
+    targetDeficiencies: ['completeness', 'diversity'],
+    rationale: 'Topics enhance repository categorization and searchability, improving completeness and demonstrating domain breadth.'
+  },
+  {
+    id: 'contribute_more',
+    text: 'Increase commit frequency and maintain consistent activity patterns',
+    category: 'Activity',
+    impact: 0.85,
+    effort: 0.7,
+    targetDeficiencies: ['activity'],
+    rationale: 'Consistent activity signals sustained engagement and reliability, directly strengthening activity metrics.'
+  },
+  {
+    id: 'add_stars',
+    text: 'Increase repository stars through quality projects and community engagement',
+    category: 'Volume',
+    impact: 0.8,
+    effort: 0.6,
+    targetDeficiencies: ['volume', 'quality'],
+    rationale: 'Stars serve as social proof of project value, directly improving volume scores while indirectly validating quality.'
+  },
+  {
+    id: 'fork_strategically',
+    text: 'Fork relevant repositories to show interest in the ecosystem',
+    category: 'Volume',
+    impact: 0.4,
+    effort: 0.3,
+    targetDeficiencies: ['volume'],
+    rationale: 'Strategic forking demonstrates ecosystem awareness and can indirectly signal Volume through portfolio expansion.'
+  },
+  {
+    id: 'use_github_actions',
+    text: 'Implement GitHub Actions CI/CD workflows for automated testing and deployment',
+    category: 'Maturity',
+    impact: 0.75,
+    effort: 0.5,
+    targetDeficiencies: ['maturity', 'quality'],
+    rationale: 'CI/CD automation demonstrates DevOps maturity and operational excellence, positively impacting both maturity and quality scores.'
+  },
+  {
+    id: 'add_license',
+    text: 'Add appropriate open source licenses to repositories',
+    category: 'Completeness',
+    impact: 0.5,
+    effort: 0.1,
+    targetDeficiencies: ['completeness', 'maturity'],
+    rationale: 'Licensing clarity is a legal and professional best practice, improving completeness and signaling project maturity.'
+  },
+  {
+    id: 'release_versions',
+    text: 'Create proper releases with version tags and release notes',
+    category: 'Maturity',
+    impact: 0.6,
+    effort: 0.4,
+    targetDeficiencies: ['maturity', 'quality'],
+    rationale: 'Versioned releases demonstrate structured development and product thinking, directly improving maturity signals.'
+  },
+  {
+    id: 'write_tests',
+    text: 'Add comprehensive test coverage to repositories',
+    category: 'Quality',
+    impact: 0.7,
+    effort: 0.6,
+    targetDeficiencies: ['quality', 'maturity'],
+    rationale: 'Test coverage demonstrates code reliability and engineering rigor, strongly influencing quality assessment.'
+  },
+  {
+    id: 'improve_descriptions',
+    text: 'Write detailed, keyword-rich repository descriptions',
+    category: 'Completeness',
+    impact: 0.5,
+    effort: 0.2,
+    targetDeficiencies: ['completeness', 'diversity'],
+    rationale: 'Descriptive metadata improves searchability and signals project intentionality, boosting completeness.'
+  },
+  {
+    id: 'code_review',
+    text: 'Participate in code reviews on other repositories',
+    category: 'Activity',
+    impact: 0.5,
+    effort: 0.4,
+    targetDeficiencies: ['activity'],
+    rationale: 'Code review activity demonstrates technical engagement and community contribution, strengthening activity.'
+  },
+  {
+    id: 'health_check',
+    text: 'Regularly update dependencies and address security vulnerabilities',
+    category: 'Quality',
+    impact: 0.55,
+    effort: 0.5,
+    targetDeficiencies: ['quality', 'consistency'],
+    rationale: 'Regular health checks maintain codebase quality and consistency, reinforcing overall quality signals.'
   }
+];
+
+export function generateRecommendations(
+  breakdown: ScoreBreakdown,
+  user: GitHubUser,
+  repos: GitHubRepo[]
+): RecommendationItem[] {
+  void user;
+  void repos;
+  const maxima: Record<string, number> = {
+    activity: 25,
+    quality: 30,
+    volume: 15,
+    diversity: 10,
+    completeness: 10,
+    maturity: 10,
+  };
+
+  const deficits: string[] = Object.entries(maxima)
+    .filter(([k, max]) => {
+      const val = (breakdown as any)[k] ?? 0;
+      return val < max * 0.7;
+    })
+    .map(([k]) => k);
+
+  if (!deficits.length) {
+    return [];
+  }
+
+  const deficitWeights: Record<string, number> = {};
+  deficits.forEach(d => {
+    const max = maxima[d];
+    const val = (breakdown as any)[d] ?? 0;
+    deficitWeights[d] = Math.max(0, 1 - val / max);
+  });
+
+  const scored = RECOMMENDATION_CATALOG.map(item => {
+    const target = item.targetDeficiencies || [];
+    let score = 0;
+    target.forEach(d => {
+      const w = deficitWeights[d] ?? 0;
+      score += w * item.impact;
+    });
+    score = item.impact > 0 ? score / (item.effort + 0.01) : 0;
+    return { item, score };
+  });
+
+  const topN = Math.max(3, Math.min(5, deficits.length));
+  const ordered = scored
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN)
+    .map(s => s.item);
+
+  return ordered;
 }

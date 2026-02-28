@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "motion/react";
 import { 
@@ -13,7 +13,8 @@ import {
   AlertCircle,
   Info,
   TrendingDown,
-  Minus
+  Minus,
+  AlertTriangle
 } from "lucide-react";
 import { 
   AreaChart,
@@ -82,6 +83,7 @@ export default function Dashboard() {
     loadingRecs,
     recError,
     isRecRateLimited,
+    recRetryAfter,
     retryRecommendations,
     totalStars,
     totalForks,
@@ -91,6 +93,28 @@ export default function Dashboard() {
     growthData,
     refetch
   } = useGithubAnalytics(username);
+
+  const [countdown, setCountdown] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isRecRateLimited) {
+      const initialCountdown = typeof recRetryAfter === 'number' && recRetryAfter > 0 ? recRetryAfter : 60;
+      setCountdown(initialCountdown);
+    } else {
+      setCountdown(null);
+    }
+  }, [isRecRateLimited, recRetryAfter]);
+
+  useEffect(() => {
+    if (countdown === null || countdown <= 0) return;
+    const timer = setTimeout(() => {
+      setCountdown(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  // Defensive: ensure recommendations is always a list before rendering
+  const safeRecommendations = useMemo(() => Array.isArray(recommendations) ? recommendations : [], [recommendations]);
 
   const chartColors = useMemo(() => {
     const isDark = theme === 'dark';
@@ -138,9 +162,9 @@ export default function Dashboard() {
       <div className="max-w-[1200px] mx-auto p-4 md:p-6 space-y-3 flex-1 w-full">
         
         {/* --- Header --- */}
-        <header className="flex items-center justify-between py-2 mb-3">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary" onClick={() => navigate("/")}>
+        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 py-2 mb-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0" onClick={() => navigate("/")}>
               <ArrowLeft className="w-4 h-4" />
             </Button>
             
@@ -148,10 +172,10 @@ export default function Dashboard() {
             <TooltipProvider>
               <UITooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center gap-3 cursor-default">
-                    <img src={user.avatar_url} alt={user.login} className="w-8 h-8 rounded-full border border-border" />
-                    <div>
-                      <h1 className="text-sm font-bold leading-none font-sans">{user.name || user.login}</h1>
+                  <div className="flex items-center gap-3 cursor-default min-w-0">
+                    <img src={user.avatar_url} alt={user.login} className="w-10 h-10 sm:w-8 sm:h-8 rounded-full border border-border shrink-0" />
+                    <div className="min-w-0">
+                      <h1 className="text-sm font-bold leading-none font-sans truncate max-w-[150px] sm:max-w-none">{user.name || user.login}</h1>
                       <a href={user.html_url} target="_blank" rel="noreferrer" className="text-xs text-muted-foreground hover:underline font-mono tabular-nums">@{user.login}</a>
                     </div>
                   </div>
@@ -180,9 +204,10 @@ export default function Dashboard() {
             </TooltipProvider>
 
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono uppercase tracking-wider hidden sm:flex tabular-nums">
-              <span className="font-sans">Last updated </span><span className="font-mono tabular-nums">{format(lastUpdated, "HH:mm")}</span>
+          <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
+            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono uppercase tracking-wider tabular-nums">
+              <span className="font-sans hidden sm:inline">Last updated </span>
+              <span className="font-mono tabular-nums">{format(lastUpdated, "HH:mm")}</span>
               <RefreshCw className="w-3 h-3 opacity-50 cursor-pointer hover:opacity-100 transition-opacity" onClick={refetch} />
             </div>
             <ModeToggle className="h-8 w-8" />
@@ -190,7 +215,7 @@ export default function Dashboard() {
         </header>
 
         {/* --- Hero KPIs --- */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 items-stretch">
+        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3 items-stretch">
           <KpiCard title="Profile score" value={scoreData?.total} grade={scoreData?.grade} />
           <KpiCard title="Total stars" value={totalStars} />
           <KpiCard title="Total forks" value={totalForks} />
@@ -421,16 +446,34 @@ export default function Dashboard() {
                 </div>
               ) : recError ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-4 min-h-[200px]">
-                  <p className="text-[11px] text-muted-foreground font-sans mb-3">{recError}</p>
-                  {!isRecRateLimited && (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={retryRecommendations}
-                      className="h-7 px-3 text-[10px] font-sans"
-                    >
-                      Try again
-                    </Button>
+                  {isRecRateLimited ? (
+                    <div className="flex flex-row items-center gap-2 text-amber-500">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      <span className="text-[10px] font-sans">
+                        API limit reached, try again in {countdown ?? recRetryAfter ?? 60}s.
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={retryRecommendations}
+                        disabled={countdown !== null && countdown > 0}
+                        className="h-6 px-2 text-[9px] font-sans shrink-0"
+                      >
+                        {countdown !== null && countdown > 0 ? 'Wait' : 'Retry'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <p className="text-[11px] text-muted-foreground font-sans mb-1">{recError}</p>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={retryRecommendations}
+                        className="h-7 px-3 text-[10px] font-sans"
+                      >
+                        Try again
+                      </Button>
+                    </div>
                   )}
                 </div>
               ) : (
@@ -440,15 +483,15 @@ export default function Dashboard() {
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.5, delay: 0.1 }}
                 >
-                  {recommendations.map((rec, i) => (
+                  {safeRecommendations.map((rec, i) => (
                     <li key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground leading-tight">
                       <span className="mt-1.5 w-1 h-1 rounded-full bg-foreground/40 shrink-0" />
                       <span className="font-sans">{rec}</span>
                     </li>
                   ))}
-                  {recommendations.length === 0 && (
-                    <li className="text-[11px] text-muted-foreground italic font-sans flex items-center justify-center h-full min-h-[200px]">
-                      No specific recommendations at this time. Keep up the great work!
+                  {safeRecommendations.length === 0 && (
+                    <li className="text-[11px] text-muted-foreground font-sans flex items-center justify-center h-full min-h-[200px]">
+                      No specific recommendations, keep up the great work!
                     </li>
                   )}
                 </motion.ul>

@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import type { Request, Response } from 'express';
 import NodeCache from 'node-cache';
+import { getAIRecommendations, getRemediationPlan } from './src/lib/openrouter';
+import type { ScoreBreakdown, GitHubUser, GitHubRepo } from './src/lib/openrouter';
 
 const githubCache = new NodeCache({ stdTTL: 900 }); // 15 minute TTL
 
@@ -19,10 +21,13 @@ async function startServer() {
       if (githubCache.has(cacheKey)) {
         return res.json(githubCache.get(cacheKey));
       }
+      // Build headers only if a GitHub API token is provided
+      const headers: any = {};
+      if (process.env.GITHUB_API_TOKEN) {
+        headers.Authorization = `token ${process.env.GITHUB_API_TOKEN}`;
+      }
       const response = await fetch(`https://api.github.com/users/${username}`, {
-        headers: {
-          Authorization: `token ${process.env.GITHUB_API_TOKEN}`,
-        },
+        headers,
       });
       if (!response.ok) {
         throw new Error(`GitHub API responded with ${response.status}`);
@@ -43,10 +48,12 @@ async function startServer() {
       if (githubCache.has(cacheKey)) {
         return res.json(githubCache.get(cacheKey));
       }
+      const headers: any = {};
+      if (process.env.GITHUB_API_TOKEN) {
+        headers.Authorization = `token ${process.env.GITHUB_API_TOKEN}`;
+      }
       const response = await fetch(`https://api.github.com/users/${username}/repos?per_page=100`, {
-        headers: {
-          Authorization: `token ${process.env.GITHUB_API_TOKEN}`,
-        },
+        headers,
       });
       if (!response.ok) {
         throw new Error(`GitHub API responded with ${response.status}`);
@@ -68,13 +75,13 @@ async function startServer() {
         return res.json(githubCache.get(cacheKey));
       }
 
+      const headers: any = {};
+      if (process.env.GITHUB_API_TOKEN) {
+        headers.Authorization = `token ${process.env.GITHUB_API_TOKEN}`;
+      }
       const [repoRes, contributorsRes] = await Promise.all([
-        fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-          headers: { Authorization: `token ${process.env.GITHUB_API_TOKEN}` },
-        }),
-        fetch(`https://api.github.com/repos/${owner}/${repo}/contributors`, {
-          headers: { Authorization: `token ${process.env.GITHUB_API_TOKEN}` },
-        }),
+        fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers }),
+        fetch(`https://api.github.com/repos/${owner}/${repo}/contributors`, { headers }),
       ]);
 
       if (!repoRes.ok) throw new Error(`GitHub API responded with ${repoRes.status} for repo details`);
@@ -104,9 +111,13 @@ async function startServer() {
         return res.json({ readme: githubCache.get(cacheKey) });
       }
 
+      const headers: any = {};
+      if (process.env.GITHUB_API_TOKEN) {
+        headers.Authorization = `token ${process.env.GITHUB_API_TOKEN}`;
+      }
       const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/readme`, {
         headers: {
-          Authorization: `token ${process.env.GITHUB_API_TOKEN}`,
+          ...headers,
           Accept: 'application/vnd.github.v3.raw',
         },
       });
@@ -141,6 +152,90 @@ async function startServer() {
     } catch (error) {
       console.error('Failed to clear cache:', error);
       res.status(500).json({ message: 'Failed to clear cache' });
+    }
+  });
+
+  app.post('/api/ai/recommendations', async (req: Request, res: Response) => {
+    try {
+      const { scoreData, user, repos } = req.body as {
+        scoreData: ScoreBreakdown;
+        user: GitHubUser;
+        repos: GitHubRepo[];
+      };
+
+      if (!scoreData || !user || !repos) {
+        return res.status(400).json({ message: 'Missing required fields: scoreData, user, or repos' });
+      }
+
+      const recommendations = await getAIRecommendations(scoreData, user, repos);
+      let recommendationPlan: string[] = [];
+      // Gate recommendation on score and multiple weak areas to avoid recommending when score is high
+      const MAXIMA: Record<string, number> = { activity: 25, quality: 30, volume: 15, diversity: 10, completeness: 10, maturity: 10 };
+      let deficitCount = 0;
+      (Object.keys(MAXIMA) as Array<keyof typeof MAXIMA>).forEach((k) => {
+        const v = (scoreData as any)[k] ?? 0;
+        if (v < MAXIMA[k] * 0.7) deficitCount++;
+      });
+      const LOW_SCORE_THRESHOLD = 60;
+      const shouldRecommend = ((scoreData.total ?? 0) < LOW_SCORE_THRESHOLD) || deficitCount >= 2;
+      if (shouldRecommend) {
+        recommendationPlan = getRemediationPlan(scoreData, user, repos);
+      }
+      res.json({ recommendations, recommendation: recommendationPlan });
+    } catch (error: any) {
+      console.error('AI recommendations error:', error);
+      const status = error?.status || 500;
+
+      // Skip fallback for rate limit errors - return proper 429 to frontend
+      if (status === 429) {
+        const extra: any = {};
+        if (error?.details && typeof error.details.retryAfter !== 'undefined') {
+          extra.retryAfter = error.details.retryAfter;
+        }
+        res.status(429).json({ message: error?.message || 'Rate limit exceeded', error: 'RATE_LIMIT', ...extra });
+        return;
+      }
+
+      const message = error?.message || 'Failed to generate AI recommendations';
+      try {
+        const { scoreData, user, repos } = req.body as {
+          scoreData: ScoreBreakdown;
+          user: GitHubUser;
+          repos: GitHubRepo[];
+        };
+        const recommendationPlan = getRemediationPlan(scoreData, user, repos);
+        res.status(200).json({ recommendations: [], recommendation: recommendationPlan, message: 'AI unavailable, returned recommendation plan' });
+        return;
+      } catch {
+        // If recommendation also fails, return the original error
+      }
+      // Include retryAfter info when available (rate limit responses)
+      const extra: any = {};
+      if (error?.details && typeof error.details.retryAfter !== 'undefined') {
+        extra.retryAfter = error.details.retryAfter;
+      }
+      res.status(status).json({ message, error: error.code || 'UNKNOWN_ERROR', ...extra });
+    }
+  });
+
+  // Explicit recommendation plan endpoint (UI or internal use)
+  app.post('/api/recommendation', async (req: Request, res: Response) => {
+    try {
+      const { scoreData, user, repos } = req.body as {
+        scoreData: ScoreBreakdown;
+        user: GitHubUser;
+        repos: GitHubRepo[];
+      };
+      if (!scoreData || !user || !repos) {
+        return res.status(400).json({ message: 'Missing required fields: scoreData, user, or repos' });
+      }
+      const plan = getRemediationPlan(scoreData, user, repos);
+      res.json({ recommendation: plan });
+    } catch (error: any) {
+      console.error('Recommendation error:', error);
+      const status = error.status || 500;
+      const message = error.message || 'Failed to generate recommendation plan';
+      res.status(status).json({ message, error: error.code || 'UNKNOWN_ERROR' });
     }
   });
 

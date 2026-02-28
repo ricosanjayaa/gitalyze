@@ -6,7 +6,6 @@ import {
   type GitHubRepo
 } from '@/lib/github';
 import { calculateScore, type ScoreBreakdown } from '@/lib/scoring';
-import { getAIRecoomendations } from '@/lib/recommendation';
 import { 
   format, 
   subMonths,
@@ -25,6 +24,7 @@ export function useGithubAnalytics(username: string | undefined) {
   const [loadingRecs, setLoadingRecs] = useState(true);
   const [recError, setRecError] = useState<string | null>(null);
   const [isRecRateLimited, setIsRecRateLimited] = useState(false);
+  const [recRetryAfter, setRecRetryAfter] = useState<number | null>(null);
   const [refetchTrigger, setRefetchTrigger] = useState(0);
   const [recRetryTrigger, setRecRetryTrigger] = useState(0);
   const hasFetchedRecs = useRef(false);
@@ -103,16 +103,59 @@ export function useGithubAnalytics(username: string | undefined) {
       setIsRecRateLimited(false);
 
       try {
-        const aiRecs = await getAIRecoomendations(scoreData, user, repos);
+        // Send a minimal payload to avoid oversized requests: pick top 5 repos and only required user fields
+        const minimalUser = {
+          name: user.name,
+          login: user.login,
+          bio: user.bio,
+          followers: user.followers,
+          public_repos: user.public_repos,
+          blog: user.blog,
+          location: user.location,
+        };
+
+        const minimalRepos = [...repos]
+          .sort((a, b) => (b.stargazers_count || 0) - (a.stargazers_count || 0))
+          .slice(0, 5)
+          .map(r => ({
+            name: r.name,
+            stargazers_count: r.stargazers_count,
+            description: r.description,
+            language: r.language,
+            archived: r.archived,
+            created_at: r.created_at,
+          }));
+
+        const response = await fetch('/api/ai/recommendations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scoreData, user: minimalUser, repos: minimalRepos }),
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+          // Surface rate limit info without throwing to allow UI to show manual retry
+          if (!ignore) {
+            setRecError(errorData.message || `HTTP ${response.status}`);
+            setIsRecRateLimited(errorData.error === 'RATE_LIMIT');
+            setRecRetryAfter(typeof errorData.retryAfter === 'number' ? errorData.retryAfter : null);
+            setRecommendations([]);
+          }
+          return;
+        }
+
+        const data = await response.json();
         if (!ignore) {
-          setRecommendations(aiRecs);
+          setRecommendations(data.recommendations || []);
+          setRecRetryAfter(null);
         }
       } catch (err: any) {
         console.error("Failed to get AI recommendations", err);
         if (!ignore) {
           const msg = err.message || "Something went wrong while generating recommendations.";
           setRecError(msg);
-          setIsRecRateLimited(msg.includes("limit"));
+          // if thrown error included a code, detect rate limit
+          setIsRecRateLimited((err && (err.code === 'RATE_LIMIT' || (err.status === 429))) || false);
+          if (err && err.details && typeof err.details.retryAfter === 'number') setRecRetryAfter(err.details.retryAfter);
           setRecommendations([]);
         }
       } finally {
@@ -193,6 +236,7 @@ export function useGithubAnalytics(username: string | undefined) {
     recError,
     isRecRateLimited,
     retryRecommendations,
+    recRetryAfter,
     totalStars,
     totalForks,
     activeRepos,

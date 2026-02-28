@@ -13,17 +13,17 @@ export default function Home() {
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.4, ease: "easeOut" }}
-        className="w-full max-w-3xl px-6 text-center flex flex-col items-center"
+        className="w-full max-w-3xl px-4 sm:px-6 text-center flex flex-col items-center"
       >
       <div className="text-center">
-        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-foreground font-sans">Github analytics, reimagined</h1>
-        <p className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto font-sans">Track the performance, diversity, and maturity of any repository or developer profile.</p>
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-foreground font-sans">Github analytics, reimagined</h1>
+        <p className="mt-4 text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto font-sans">Track the performance, diversity, and maturity of any repository or developer profile.</p>
       </div>
       <div className="mt-8 w-full max-w-2xl">
         <SearchInput />
       </div>
 
-        <div className="mt-20 grid grid-cols-3 gap-8 md:gap-16 text-xs md:text-sm text-muted-foreground/40 font-mono uppercase tracking-widest tabular-nums">
+        <div className="mt-16 sm:mt-20 grid grid-cols-3 gap-6 sm:gap-8 md:gap-16 text-xs md:text-sm text-muted-foreground/40 font-mono uppercase tracking-widest tabular-nums">
           <div className="font-sans">No Tracking</div>
           <div className="font-sans">Open Source</div>
           <div className="font-sans">Fast</div>

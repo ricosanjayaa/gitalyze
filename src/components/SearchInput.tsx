@@ -23,13 +23,13 @@ export function SearchInput() {
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             type="text"
-            placeholder="Enter a GitHub username..."
+            placeholder="Enter GitHub username..."
             className="pl-9 h-11 text-sm rounded-lg bg-background/80 border-border/50 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background transition-all shadow-sm"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
           />
         </div>
-        <Button type="submit" className="h-11 rounded-lg px-5 text-sm font-semibold">Analyze</Button>
+        <Button type="submit" className="h-11 rounded-lg px-4 sm:px-5 text-sm font-semibold">Analyze</Button>
       </div>
     </form>
   );
