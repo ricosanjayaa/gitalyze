@@ -85,7 +85,7 @@ export function buildDashboardMetadata({
 }: DashboardMetadataOptions): SeoMetadata {
   const displayName = user.name ?? user.login;
   const gradeCopy = scoreData?.grade ? ` ${scoreData.grade} grade` : '';
-  const title = `${displayName} · GitHub analytics`;
+  const title = `${displayName} · ${siteMetadata.name}`;
   const description = `${displayName} has ${totalStars.toLocaleString()} stars and ${totalForks.toLocaleString()} forks across ${user.public_repos} repositories${gradeCopy}.`;
   return {
     title,

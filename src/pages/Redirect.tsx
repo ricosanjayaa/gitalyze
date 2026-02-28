@@ -3,13 +3,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { SeoHead } from '@/components/SeoHead';
+import { siteMetadata } from '@/lib/seo';
 
 export default function RedirectPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const redirectUrl = searchParams.get('url');
   const metadata = {
-    title: 'Leaving our site · Github Analytics',
+    title: `Leaving our site · ${siteMetadata.name}`,
     description: 'You are being redirected to an external site for additional insight.',
     canonicalPath: '/redirect',
   };

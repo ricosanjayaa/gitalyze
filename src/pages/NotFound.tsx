@@ -3,11 +3,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ArrowLeft, Frown } from 'lucide-react';
 import { SeoHead } from '@/components/SeoHead';
+import { siteMetadata } from '@/lib/seo';
 
 export default function NotFoundPage() {
   const navigate = useNavigate();
   const metadata = {
-    title: 'Page not found · Github Analytics',
+    title: `Page not found · ${siteMetadata.name}`,
     description: 'The page you are looking for does not exist.',
     canonicalPath: '/404',
     robots: 'noindex,follow',
