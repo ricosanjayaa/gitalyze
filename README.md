@@ -10,14 +10,17 @@ View your app in AI Studio: https://ai.studio/apps/0c2cf118-6213-4baa-965f-8a1bc
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Bun (recommended) or Node.js
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   `bun install` (or `npm install` / `yarn install` if you prefer)
+2. Set the required environment variables in `.env.local` (see the AI & SEO sections below).
+3. Run the dev server (Express + Vite middleware) with:
+   `bun run dev`
+
+After running `bun run build`, preview the production bundle via the same server:
+`bun run preview`
+`bun run preview` executes `NODE_ENV=production bun ./server.ts`, so the static assets and API routes live on a single process - no need to run `vite preview` or maintain two terminals.
 
 ## SEO & Sitemap
 

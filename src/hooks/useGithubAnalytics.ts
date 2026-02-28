@@ -178,6 +178,12 @@ export function useGithubAnalytics(username: string | undefined) {
           return;
         }
 
+        const contentType = response.headers.get('content-type') ?? '';
+        if (!contentType.includes('application/json')) {
+          const bodyText = await response.text().catch(() => '');
+          throw new Error(`Unexpected response content-type (${contentType || 'unknown'}). ${bodyText}`);
+        }
+
         const data = await response.json();
         if (!ignore) {
           const newRecs = data.recommendations || [];

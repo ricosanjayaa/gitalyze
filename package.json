@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun ./server.ts",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "NODE_ENV=production bun ./server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "generate:sitemap": "bun scripts/generate-sitemap.ts",

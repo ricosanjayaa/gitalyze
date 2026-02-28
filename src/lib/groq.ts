@@ -5,6 +5,15 @@ import { generateRecommendations } from "./recommendation";
 
 export type { ScoreBreakdown, GitHubUser, GitHubRepo };
 
+const SCORE_MAXIMA = {
+  activity: 25,
+  quality: 30,
+  volume: 15,
+  diversity: 10,
+  completeness: 10,
+  maturity: 10,
+} as const;
+
 const CACHE_TTL_MS = Number(process.env.RECOMMENDATION_CACHE_TTL_MS) || 15 * 60 * 1000;
 const recommendationCache = new Map<string, { data: string[]; timestamp: number }>();
 const retrievalPromises = new Map<string, Promise<string[]>>();
@@ -54,7 +63,7 @@ function sleep(ms: number) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-function buildPrompt(user: GitHubUser, repos: GitHubRepo[]) {
+function buildPrompt(user: GitHubUser, repos: GitHubRepo[], breakdown?: ScoreBreakdown) {
   const accountAge = user.created_at
     ? Math.floor(
         (Date.now() - new Date(user.created_at).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
@@ -68,7 +77,7 @@ function buildPrompt(user: GitHubUser, repos: GitHubRepo[]) {
   }).length;
 
   const system =
-    "You are a senior engineer mentoring developers on GitHub portfolios. Give 2-4 unique recommendations as a JSON array. Start each with an action verb. If the user has only a profile README (Top: profile-only), recommend creating REAL project repositories, NOT improving the README. If the profile is strong, return [].";
+    "You are a senior engineer mentoring developers on GitHub portfolios. Give 2-4 unique recommendations as a JSON array of strings. Start each with an action verb. If the user has only a profile README (Top: profile-only), recommend creating REAL project repositories, NOT improving the README. If ANY category score is below 70% of its max, return 2-4 actionable items; otherwise return [].";
   const isProfileOnly = top?.name === user.login;
   const userMsg = `${user.login}: ${user.public_repos} repo, ${accountAge}yr, ${user.followers} followers, ${
     languages.slice(0, 3).join(",") || "-"
@@ -78,7 +87,13 @@ function buildPrompt(user: GitHubUser, repos: GitHubRepo[]) {
     recentlyUpdated > 0 ? "yes" : "no"
   }.`;
 
-  return `${system}\n\nProfile: ${userMsg}\n\nResponse format: JSON array of recommendations (strings).`;
+  const scoreSummary = breakdown
+    ? `Scores: ${Object.entries(SCORE_MAXIMA)
+        .map(([k, max]) => `${k} ${((breakdown as any)[k] ?? 0)}/${max}`)
+        .join(", ")}.`
+    : "";
+
+  return `${system}\n\n${scoreSummary ? scoreSummary + "\n\n" : ""}Profile: ${userMsg}\n\nResponse format: JSON array of recommendations (strings).`;
 }
 
 function extractText(body: any): string {
@@ -95,7 +110,11 @@ function extractText(body: any): string {
   return "";
 }
 
-export async function getGroqRecommendations(user: GitHubUser, repos: GitHubRepo[]): Promise<string[]> {
+export async function getGroqRecommendations(
+  user: GitHubUser,
+  repos: GitHubRepo[],
+  scoreData?: ScoreBreakdown
+): Promise<string[]> {
   const cfg = getGroqConfig();
   if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
 
@@ -114,7 +133,7 @@ export async function getGroqRecommendations(user: GitHubUser, repos: GitHubRepo
       throw { code: "RATE_LIMIT", message: "AI rate limit cooldown active", status: 429, details: { retryAfter } };
     }
 
-    const prompt = buildPrompt(user, repos);
+    const prompt = buildPrompt(user, repos, scoreData);
     const groq = new Groq({ apiKey: cfg.apiKey });
     const maxAttempts = cfg.maxRetries + 1;
     let lastErr: any = null;

@@ -13,7 +13,7 @@ const githubCache = new NodeCache({ stdTTL: 900 }); // 15 minute TTL
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -191,13 +191,22 @@ async function startServer() {
         return res.json({ recommendations: [] });
       }
 
-      const recommendations = await getGroqRecommendations(user, repos);
+      const recommendations = await getGroqRecommendations(user, repos, scoreData);
       console.log('[SERVER] AI recommendations:', recommendations);
-      
-      // Return what AI gives - no template fallback
-      const finalRecommendations = recommendations;
-      console.log('[SERVER] Final recommendations:', finalRecommendations);
-      res.json({ recommendations: finalRecommendations });
+
+      // If AI returns nothing but scoring indicates deficits, return deterministic guidance.
+      if (recommendations.length === 0) {
+        const fallbackPlan = getRemediationPlan(scoreData, user, repos);
+        if (fallbackPlan.length > 0) {
+          return res.json({
+            recommendations: fallbackPlan,
+            fallback: true,
+            message: 'Heuristic plan (AI returned empty)',
+          });
+        }
+      }
+
+      res.json({ recommendations });
     } catch (error: any) {
       console.error('[SERVER] AI error:', error.message);
       const status = error?.status || 500;
@@ -212,6 +221,15 @@ async function startServer() {
         }
         res.status(429).json({ message: error?.message || 'Rate limit exceeded', error: 'RATE_LIMIT', recommendations: fallbackPlan, ...extra });
         return;
+      }
+
+      const fallbackPlan = getRemediationPlan(scoreData, user, repos);
+      if (fallbackPlan.length > 0) {
+        return res.json({
+          recommendations: fallbackPlan,
+          fallback: true,
+          message: 'Heuristic plan (AI error)',
+        });
       }
 
       // No fallback - return empty recommendations on error
@@ -253,7 +271,8 @@ async function startServer() {
 
   } else {
     app.use(express.static(distDir, { index: false }));
-    app.get('*', (req, res, next) => {
+    // Express 5 + path-to-regexp v6 doesn't accept '*' style globs; use a regex catch-all.
+    app.get(/.*/, (req, res, next) => {
       if (req.path.startsWith('/api') || req.path === '/sitemap.xml' || req.path === '/robots.txt') {
         return next();
       }
@@ -264,6 +283,10 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Bun currently exits even with a Node-style HTTP server listening.
+  // Keep the process alive so `bun run dev/preview` behaves like Node.
+  await new Promise<void>(() => {});
 }
 
-startServer();
+await startServer();

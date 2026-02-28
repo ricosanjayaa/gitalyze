@@ -128,6 +128,24 @@ export default function Dashboard() {
   // Defensive: ensure recommendations is always a list before rendering
   const safeRecommendations = useMemo(() => Array.isArray(recommendations) ? recommendations : [], [recommendations]);
 
+  const hasDeficits = useMemo(() => {
+    if (!scoreData) return false;
+
+    const MAXIMA: Record<string, number> = {
+      activity: 25,
+      quality: 30,
+      volume: 15,
+      diversity: 10,
+      completeness: 10,
+      maturity: 10,
+    };
+
+    return Object.entries(MAXIMA).some(([k, max]) => {
+      const val = (scoreData as any)[k] ?? 0;
+      return val < max * 0.7;
+    });
+  }, [scoreData]);
+
   const chartColors = useMemo(() => {
     const isDark = theme === 'dark';
     return {
@@ -528,15 +546,31 @@ export default function Dashboard() {
                         </li>
                       ))}
                     </motion.ul>
-                  ) : (
-                    <div className="flex-1 flex items-center justify-center min-h-[200px]">
-                      <p className="text-[11px] text-muted-foreground font-sans text-center px-4">
-                        No recommendations needed, keep it up!
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
+	                  ) : (
+	                    <div className="flex-1 flex items-center justify-center min-h-[200px]">
+	                      {hasDeficits ? (
+	                        <div className="flex flex-col items-center justify-center gap-2 min-h-[200px] text-center px-4">
+	                          <p className="text-[11px] text-muted-foreground font-sans">
+	                            No AI recommendations returned - showing none right now.
+	                          </p>
+	                          <Button
+	                            variant="outline"
+	                            size="sm"
+	                            onClick={retryRecommendations}
+	                            className="h-7 px-3 text-[10px] font-sans"
+	                          >
+	                            Try again
+	                          </Button>
+	                        </div>
+	                      ) : (
+	                        <p className="text-[11px] text-muted-foreground font-sans text-center px-4">
+	                          No recommendations needed, keep it up!
+	                        </p>
+	                      )}
+	                    </div>
+	                  )}
+	                </>
+	              )}
             </CardContent>
           </Card>
 
