@@ -5,19 +5,33 @@ import { generateRecommendations } from "./recommendation";
 // small type re-exports for server usage
 export type { ScoreBreakdown, GitHubUser, GitHubRepo };
 
+// Server-side cache for recommendations (5 minute TTL)
+const recommendationCache = new Map<string, { data: string[]; timestamp: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCachedRecommendations(username: string): string[] | null {
+  const cached = recommendationCache.get(username.toLowerCase());
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    console.log('[CACHE] Returning cached recommendations for:', username);
+    return cached.data;
+  }
+  recommendationCache.delete(username.toLowerCase());
+  return null;
+}
+
+function setCachedRecommendations(username: string, data: string[]): void {
+  recommendationCache.set(username.toLowerCase(), { data, timestamp: Date.now() });
+  console.log('[CACHE] Cached recommendations for:', username);
+}
+
 function getOpenRouterConfig() {
   return {
     apiKey: process.env.OPENROUTER_API_KEY,
     endpoint: process.env.OPENROUTER_API_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions',
-    model: process.env.OPENROUTER_MODEL || 'stepfun/step-3.5-flash:free',
-    timeoutMS: Number(process.env.OPENROUTER_TIMEOUT_MS) || 12000,
+    model: process.env.OPENROUTER_MODEL || 'qwen/qwen3-next-80b-a3b-instruct:free',
+    timeoutMS: Number(process.env.OPENROUTER_TIMEOUT_MS) || 15000,
     maxRetries: Number(process.env.OPENROUTER_MAX_RETRIES) || 2,
   };
-}
-
-function truncate(s: string | null | undefined, n = 140) {
-  if (!s) return '';
-  return s.length > n ? s.slice(0, n - 1).trim() + '…' : s;
 }
 
 function sleep(ms: number) {
@@ -26,34 +40,33 @@ function sleep(ms: number) {
 
 // Minimal, robust OpenRouter caller that keeps prompts small and dynamic.
 export async function getAIRecoomendations(
-  breakdown: ScoreBreakdown,
   user: GitHubUser,
   repos: GitHubRepo[]
 ): Promise<string[]> {
   const cfg = getOpenRouterConfig();
   if (!cfg.apiKey) throw { code: 'MISSING_API_KEY', message: 'OPENROUTER_API_KEY not set.' };
 
-  // Prepare a compact summary
-  const top = (repos || [])
-    .sort((a, b) => (b.stargazers_count || 0) - (a.stargazers_count || 0))
-    .slice(0, 3)
-    .map(r => `${r.name} (${r.stargazers_count || 0}★): ${truncate(r.description, 80)}`)
-    .join(' | ');
-
-  // Determine weak areas (threshold: less than 70% of category max)
-  const maxima: Record<string, number> = { activity: 25, quality: 30, volume: 15, diversity: 10, completeness: 10, maturity: 10 };
-  const weakAreas = Object.entries(maxima)
-    .filter(([k, max]) => (breakdown as any)[k] < Math.round(max * 0.7))
-    .map(([k]) => k);
-
-  if (!weakAreas.length) {
-    // No weak areas — don't call the model unnecessarily
-    return [];
+  // Check server-side cache first
+  const cachedRecs = getCachedRecommendations(user.login);
+  if (cachedRecs) {
+    return cachedRecs;
   }
 
-  // Dynamic, engaging recommendations based on actual user data
-  const system = 'You are a senior engineer giving portfolio advice. Be practical, direct, and mentorship-oriented.';
-  const userMsg = `Give 2-4 concise suggestions to improve this GitHub profile as a professional portfolio. User: ${user.name || user.login}, ${user.public_repos} repos, ${user.followers} followers. Top repo: ${top || 'none'}. Missing: ${!user.bio ? 'bio ' : ''}${!user.location ? 'location ' : ''}${!user.blog ? 'blog' : ''}. Rules: Start with action verbs like Add, Pin, Strengthen, Enhance, Showcase. No numbers. No em dashes. Under 20 words each. Focus on what helps their career.`;
+  // Prepare compact profile data
+  const accountAge = user.created_at ? Math.floor((Date.now() - new Date(user.created_at).getTime()) / (365.25 * 24 * 60 * 60 * 1000)) : 0;
+  const languages = [...new Set(repos.map(r => r.language).filter(Boolean))];
+  const top = [...repos].sort((a, b) => b.stargazers_count - a.stargazers_count)[0];
+  const recentlyUpdated = repos.filter(r => {
+    const daysSinceUpdate = (Date.now() - new Date(r.pushed_at).getTime()) / (24 * 60 * 60 * 1000);
+    return daysSinceUpdate <= 30;
+  }).length;
+
+  // Compact prompt for AI - optimized for Qwen3
+  const system = `You are a senior engineer mentoring developers on GitHub portfolios. Give 2-4 unique recommendations as a JSON array. Start each with an action verb. If the user has only a profile README (Top: profile-only), recommend creating REAL project repositories, NOT improving the README. If profile is strong, return [].`;
+
+  // Compact user data - with profile detection
+  const isProfileOnly = top?.name === user.login;
+  const userMsg = `${user.login}: ${user.public_repos} repo, ${accountAge}yr, ${user.followers} followers, ${languages.slice(0,3).join(',') || '-'}. Top: ${isProfileOnly ? 'profile-only' : top?.name || '-'}. Missing: ${!user.bio ? 'bio ' : ''}${!user.location ? 'loc ' : ''}${!user.blog ? 'blog' : ''}. Active: ${recentlyUpdated > 0 ? 'yes' : 'no'}.`;
 
   const maxAttempts = cfg.maxRetries + 1;
   let lastErr: any = null;
@@ -75,7 +88,7 @@ export async function getAIRecoomendations(
             { role: 'user', content: userMsg }
           ],
           temperature: 0.6,
-          max_tokens: 180,
+          max_tokens: 300,
         }),
         signal: ac.signal,
       });
@@ -85,16 +98,24 @@ export async function getAIRecoomendations(
         const errData = await res.json().catch(() => ({}));
         lastErr = { status: res.status, details: errData };
 
-        // If rate-limited, do NOT auto-retry - surface the retry info to the caller
+        // Rate-limited: auto retry with backoff (max 2 retries)
         if (res.status === 429) {
+          if (attempt < maxAttempts) {
+            const backoffMs = 10000 * Math.pow(2, attempt - 1); // 10s, 20s
+            console.log(`[AI] Rate limited, retrying in ${backoffMs/1000}s (attempt ${attempt + 1}/${maxAttempts})`);
+            await sleep(backoffMs);
+            continue;
+          }
+          // After retries exhausted, surface the error
           const retryAfterHeader = res.headers?.get ? res.headers.get('retry-after') : null;
-          const retryAfter = retryAfterHeader ? (parseInt(retryAfterHeader, 10) || 60) : 60; // default to 60s if missing
+          const retryAfter = retryAfterHeader ? (parseInt(retryAfterHeader, 10) || 60) : 60;
           throw { code: 'RATE_LIMIT', message: errData.message || 'OpenRouter rate limit exceeded', status: 429, details: { retryAfter } };
         }
 
         // For server errors, allow a single retry
         if (res.status >= 500 && attempt < maxAttempts) {
           const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 8000) + Math.random() * 1000;
+          console.log(`[AI] Server error ${res.status}, retrying in ${Math.round(backoff)}ms`);
           await sleep(backoff);
           continue;
         }
@@ -103,6 +124,8 @@ export async function getAIRecoomendations(
       }
 
       const body = await res.json();
+      console.log('[AI] Raw response:', JSON.stringify(body).slice(0, 500));
+
       // Robustly extract text from various AI response shapes (different providers/models)
       const extractText = (b: any): string => {
         if (!b) return '';
@@ -110,6 +133,7 @@ export async function getAIRecoomendations(
         if (!c) return '';
         if (typeof c === 'string') return c;
         if (c?.message?.content) return c.message.content;
+        if (c?.message?.reasoning) return c.message.reasoning;
         if (typeof c?.text === 'string') return c.text;
         if (typeof c?.content === 'string') return c.content;
         if (Array.isArray(c) && c.length > 0 && typeof c[0] === 'string') return c[0];
@@ -118,6 +142,7 @@ export async function getAIRecoomendations(
         return '';
       };
       const text = extractText(body);
+      console.log('[AI] Extracted text:', text.slice(0, 300));
 
       // Robust parsing strategy:
       // 1) Try direct JSON parse
@@ -171,11 +196,16 @@ export async function getAIRecoomendations(
 
       if (!arr || !Array.isArray(arr) || arr.length === 0) {
         // Graceful fallback: no recommendations can be parsed from the response
+        console.log('[AI] No valid recommendations found, returning empty array');
         return [];
       }
 
       // Normalize and limit
       const normalized = arr.map(s => s.replace(/^[-•\d\.\)\s]+/, '').trim()).filter(Boolean).slice(0, 4);
+      console.log('[AI] Final parsed recommendations:', normalized);
+      
+      // Cache the recommendations
+      setCachedRecommendations(user.login, normalized);
       return normalized;
 
     } catch (err) {
@@ -190,11 +220,10 @@ export async function getAIRecoomendations(
 }
 
 export async function getAIRecommendations(
-  breakdown: ScoreBreakdown,
   user: GitHubUser,
   repos: GitHubRepo[]
 ): Promise<string[]> {
-  return getAIRecoomendations(breakdown, user, repos);
+  return getAIRecoomendations(user, repos);
 }
 
 // Lightweight recommendation plan when scores are low (no UI changes)

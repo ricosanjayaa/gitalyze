@@ -479,24 +479,29 @@ export default function Dashboard() {
                   )}
                 </div>
               ) : (
-                <motion.ul 
-                  className="space-y-2"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.5, delay: 0.1 }}
-                >
-                  {safeRecommendations.map((rec, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground leading-tight">
-                      <span className="mt-1.5 w-1 h-1 rounded-full bg-foreground/40 shrink-0" />
-                      <span className="font-sans">{rec}</span>
-                    </li>
-                  ))}
-                  {safeRecommendations.length === 0 && (
-                    <li className="text-[11px] text-muted-foreground font-sans flex items-center justify-center h-full min-h-[200px]">
-                      No specific recommendations, keep up the great work!
-                    </li>
+                <>
+                  {safeRecommendations.length > 0 ? (
+                    <motion.ul 
+                      className="space-y-2"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.5, delay: 0.1 }}
+                    >
+                      {safeRecommendations.map((rec, i) => (
+                        <li key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground leading-tight">
+                          <span className="mt-1.5 w-1 h-1 rounded-full bg-foreground/40 shrink-0" />
+                          <span className="font-sans">{rec}</span>
+                        </li>
+                      ))}
+                    </motion.ul>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center min-h-[200px]">
+                      <p className="text-[11px] text-muted-foreground font-sans text-center px-4">
+                        No recommendations needed, keep it up!
+                      </p>
+                    </div>
                   )}
-                </motion.ul>
+                </>
               )}
             </CardContent>
           </Card>

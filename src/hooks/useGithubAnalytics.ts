@@ -97,6 +97,33 @@ export function useGithubAnalytics(username: string | undefined) {
         return;
       }
 
+      // Check client-side cache only for DIFFERENT profiles (not page refresh)
+      const cacheKey = `recs_${user.login}`;
+      const lastViewedUsername = localStorage.getItem('last_viewed_username');
+      const cachedData = localStorage.getItem(cacheKey);
+      
+      // Only use cache if this is a different profile (not a page refresh)
+      const isNewProfile = lastViewedUsername !== user.login;
+      
+      if (cachedData && recRetryTrigger === 0 && isNewProfile) {
+        try {
+          const { recs, timestamp } = JSON.parse(cachedData);
+          const cacheAge = Date.now() - timestamp;
+          if (cacheAge < 5 * 60 * 1000) {
+            console.log('[CLIENT CACHE] Using cached recommendations for new profile');
+            setRecommendations(recs);
+            setLoadingRecs(false);
+            localStorage.setItem('last_viewed_username', user.login);
+            return;
+          }
+        } catch (e) {
+          // Invalid cache, continue to fetch
+        }
+      }
+
+      // Update last viewed username
+      localStorage.setItem('last_viewed_username', user.login);
+
       hasFetchedRecs.current = true;
       setLoadingRecs(true);
       setRecError(null);
@@ -145,9 +172,11 @@ export function useGithubAnalytics(username: string | undefined) {
 
         const data = await response.json();
         if (!ignore) {
-          const recs = data.recommendations?.length ? data.recommendations : data.recommendation || [];
-          setRecommendations(recs);
+          const newRecs = data.recommendations || [];
+          setRecommendations(newRecs);
           setRecRetryAfter(null);
+          // Cache the recommendations
+          localStorage.setItem(cacheKey, JSON.stringify({ recs: newRecs, timestamp: Date.now() }));
         }
       } catch (err: any) {
         console.error("Failed to get AI recommendations", err);

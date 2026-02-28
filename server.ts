@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import type { Request, Response } from 'express';
 import NodeCache from 'node-cache';
-import { getAIRecommendations, getRemediationPlan } from './src/lib/openrouter';
+import { getAIRecommendations } from './src/lib/openrouter';
 import type { ScoreBreakdown, GitHubUser, GitHubRepo } from './src/lib/openrouter';
 
 const githubCache = new NodeCache({ stdTTL: 900 }); // 15 minute TTL
@@ -167,23 +167,27 @@ async function startServer() {
         return res.status(400).json({ message: 'Missing required fields: scoreData, user, or repos' });
       }
 
-      const recommendations = await getAIRecommendations(scoreData, user, repos);
-      let recommendationPlan: string[] = [];
-      // Gate recommendation on score and multiple weak areas to avoid recommending when score is high
+      // Skip AI if ALL category scores are great (<=75% of max)
       const MAXIMA: Record<string, number> = { activity: 25, quality: 30, volume: 15, diversity: 10, completeness: 10, maturity: 10 };
-      let deficitCount = 0;
-      (Object.keys(MAXIMA) as Array<keyof typeof MAXIMA>).forEach((k) => {
-        const v = (scoreData as any)[k] ?? 0;
-        if (v < MAXIMA[k] * 0.7) deficitCount++;
+      const hasWeakCategory = Object.entries(MAXIMA).some(([k, max]) => {
+        const val = (scoreData as any)[k] ?? 0;
+        return val <= max * 0.75;
       });
-      const LOW_SCORE_THRESHOLD = 60;
-      const shouldRecommend = ((scoreData.total ?? 0) < LOW_SCORE_THRESHOLD) || deficitCount >= 2;
-      if (shouldRecommend) {
-        recommendationPlan = getRemediationPlan(scoreData, user, repos);
+
+      if (!hasWeakCategory) {
+        console.log('[SERVER] All categories are strong, skipping AI recommendations');
+        return res.json({ recommendations: [] });
       }
-      res.json({ recommendations, recommendation: recommendationPlan });
+
+      const recommendations = await getAIRecommendations(user, repos);
+      console.log('[SERVER] AI recommendations:', recommendations);
+      
+      // Return what AI gives - no template fallback
+      const finalRecommendations = recommendations;
+      console.log('[SERVER] Final recommendations:', finalRecommendations);
+      res.json({ recommendations: finalRecommendations });
     } catch (error: any) {
-      console.error('AI recommendations error:', error);
+      console.error('[SERVER] AI error:', error.message);
       const status = error?.status || 500;
 
       // Skip fallback for rate limit errors - return proper 429 to frontend
@@ -196,46 +200,8 @@ async function startServer() {
         return;
       }
 
-      const message = error?.message || 'Failed to generate AI recommendations';
-      try {
-        const { scoreData, user, repos } = req.body as {
-          scoreData: ScoreBreakdown;
-          user: GitHubUser;
-          repos: GitHubRepo[];
-        };
-        const recommendationPlan = getRemediationPlan(scoreData, user, repos);
-        res.status(200).json({ recommendations: [], recommendation: recommendationPlan, message: 'AI unavailable, returned recommendation plan' });
-        return;
-      } catch {
-        // If recommendation also fails, return the original error
-      }
-      // Include retryAfter info when available (rate limit responses)
-      const extra: any = {};
-      if (error?.details && typeof error.details.retryAfter !== 'undefined') {
-        extra.retryAfter = error.details.retryAfter;
-      }
-      res.status(status).json({ message, error: error.code || 'UNKNOWN_ERROR', ...extra });
-    }
-  });
-
-  // Explicit recommendation plan endpoint (UI or internal use)
-  app.post('/api/recommendation', async (req: Request, res: Response) => {
-    try {
-      const { scoreData, user, repos } = req.body as {
-        scoreData: ScoreBreakdown;
-        user: GitHubUser;
-        repos: GitHubRepo[];
-      };
-      if (!scoreData || !user || !repos) {
-        return res.status(400).json({ message: 'Missing required fields: scoreData, user, or repos' });
-      }
-      const plan = getRemediationPlan(scoreData, user, repos);
-      res.json({ recommendation: plan });
-    } catch (error: any) {
-      console.error('Recommendation error:', error);
-      const status = error.status || 500;
-      const message = error.message || 'Failed to generate recommendation plan';
-      res.status(status).json({ message, error: error.code || 'UNKNOWN_ERROR' });
+      // No fallback - return empty recommendations on error
+      res.json({ recommendations: [] });
     }
   });
 
