@@ -20,6 +20,8 @@
         "./src/*"
       ]
     },
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "noUnusedLocals": true,

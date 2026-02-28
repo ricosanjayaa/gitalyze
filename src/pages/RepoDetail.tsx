@@ -17,6 +17,8 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Linkify } from '@/components/Linkify'
+import { SeoHead } from '@/components/SeoHead'
+import { buildRepoMetadata } from '@/lib/seo'
 
 interface RepoData {
   name: string
@@ -99,7 +101,10 @@ export default function RepoDetail() {
     )
   }
 
+  const seoMetadata = buildRepoMetadata(repoData);
   return (
+    <>
+      <SeoHead metadata={seoMetadata} />
     <div className="min-h-screen bg-background text-foreground font-sans">
       <div className="max-w-[1100px] mx-auto px-4 md:px-6 py-6 space-y-8">
         
@@ -244,6 +249,7 @@ export default function RepoDetail() {
         </div>
       </div>
     </div>
+    </>
   )
 }
 

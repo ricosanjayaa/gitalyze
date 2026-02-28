@@ -2,12 +2,21 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ArrowLeft, Frown } from 'lucide-react';
+import { SeoHead } from '@/components/SeoHead';
 
 export default function NotFoundPage() {
   const navigate = useNavigate();
+  const metadata = {
+    title: 'Page not found · Github Analytics',
+    description: 'The page you are looking for does not exist.',
+    canonicalPath: '/404',
+    robots: 'noindex,follow',
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-4">
+    <>
+      <SeoHead metadata={metadata} />
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-4">
       <Card className="w-full max-w-md text-center">
         <CardHeader>
           <div className="mx-auto bg-secondary/50 border border-border/20 rounded-full p-3 mb-4 w-fit">
@@ -23,6 +32,7 @@ export default function NotFoundPage() {
           </Button>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

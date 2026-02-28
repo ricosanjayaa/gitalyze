@@ -1,10 +1,15 @@
 import { motion } from "motion/react";
 import { ModeToggle } from "@/components/mode-toggle";
 import { SearchInput } from "@/components/SearchInput";
+import { SeoHead } from "@/components/SeoHead";
+import { buildHomeMetadata } from "@/lib/seo";
 
 export default function Home() {
+  const metadata = buildHomeMetadata();
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground relative overflow-hidden selection:bg-primary selection:text-primary-foreground">
+    <>
+      <SeoHead metadata={metadata} />
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground relative overflow-hidden selection:bg-primary selection:text-primary-foreground">
       <div className="absolute top-6 right-6 opacity-50 hover:opacity-100 transition-opacity">
         <ModeToggle />
       </div>
@@ -30,5 +35,6 @@ export default function Home() {
         </div>
       </motion.div>
     </div>
+    </>
   );
 }

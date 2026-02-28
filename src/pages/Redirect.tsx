@@ -2,19 +2,27 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { SeoHead } from '@/components/SeoHead';
 
 export default function RedirectPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const redirectUrl = searchParams.get('url');
+  const metadata = {
+    title: 'Leaving our site · Github Analytics',
+    description: 'You are being redirected to an external site for additional insight.',
+    canonicalPath: '/redirect',
+  };
 
   if (!redirectUrl) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle>Invalid Redirect</CardTitle>
-            <CardDescription>No redirect URL was provided.</CardDescription>
+      <>
+        <SeoHead metadata={metadata} />
+        <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <CardTitle>Invalid Redirect</CardTitle>
+              <CardDescription>No redirect URL was provided.</CardDescription>
           </CardHeader>
           <CardContent>
             <Button onClick={() => navigate(-1)} variant="outline">
@@ -22,8 +30,9 @@ export default function RedirectPage() {
               Go Back
             </Button>
           </CardContent>
-        </Card>
-      </div>
+          </Card>
+        </div>
+      </>
     );
   }
 
@@ -33,7 +42,9 @@ export default function RedirectPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-4">
+    <>
+      <SeoHead metadata={metadata} />
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-4">
       <Card className="w-full max-w-md text-center">
         <CardHeader>
           <CardTitle className="text-2xl">Leaving our site</CardTitle>
@@ -55,6 +66,7 @@ export default function RedirectPage() {
           </div>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

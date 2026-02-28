@@ -13,6 +13,8 @@ import {
   isSameQuarter
 } from 'date-fns';
 
+const CLIENT_CACHE_TTL_MS = Number(import.meta.env.VITE_RECOMMENDATION_CACHE_TTL_MS) || 15 * 60 * 1000;
+
 export function useGithubAnalytics(username: string | undefined) {
   const [user, setUser] = useState<GitHubUser | null>(null);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
@@ -109,7 +111,7 @@ export function useGithubAnalytics(username: string | undefined) {
         try {
           const { recs, timestamp } = JSON.parse(cachedData);
           const cacheAge = Date.now() - timestamp;
-          if (cacheAge < 5 * 60 * 1000) {
+          if (cacheAge < CLIENT_CACHE_TTL_MS) {
             console.log('[CLIENT CACHE] Using cached recommendations for new profile');
             setRecommendations(recs);
             setLoadingRecs(false);
@@ -162,10 +164,16 @@ export function useGithubAnalytics(username: string | undefined) {
           const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
           // Surface rate limit info without throwing to allow UI to show manual retry
           if (!ignore) {
+            const fallbackRecs = Array.isArray(errorData.recommendations) ? errorData.recommendations : [];
             setRecError(errorData.message || `HTTP ${response.status}`);
             setIsRecRateLimited(errorData.error === 'RATE_LIMIT');
             setRecRetryAfter(typeof errorData.retryAfter === 'number' ? errorData.retryAfter : null);
-            setRecommendations([]);
+            if (fallbackRecs.length) {
+              setRecommendations(fallbackRecs);
+              localStorage.setItem(cacheKey, JSON.stringify({ recs: fallbackRecs, timestamp: Date.now() }));
+            } else {
+              setRecommendations([]);
+            }
           }
           return;
         }

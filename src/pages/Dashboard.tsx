@@ -44,6 +44,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { SeoHead } from "@/components/SeoHead";
+import { buildDashboardMetadata, buildHomeMetadata, siteMetadata } from "@/lib/seo";
 
 const KpiCard = ({ title, value, grade, total }: { title: string; value: number; grade?: string; total?: number }) => {
   const gradeColor = grade?.startsWith('A') ? 'text-emerald-500' : 
@@ -94,6 +96,16 @@ export default function Dashboard() {
     refetch
   } = useGithubAnalytics(username);
 
+  const metadata = useMemo(() => {
+    if (!username) {
+      return buildHomeMetadata();
+    }
+    if (user) {
+      return buildDashboardMetadata({ user, scoreData, totalStars, totalForks });
+    }
+    return buildHomeMetadata();
+  }, [user, username, scoreData, totalStars, totalForks]);
+
   const [countdown, setCountdown] = useState<number | null>(null);
 
   useEffect(() => {
@@ -132,34 +144,49 @@ export default function Dashboard() {
   }, [theme]);
 
   if (loading) {
-    return <DashboardSkeleton />;
+    return (
+      <>
+        <SeoHead metadata={buildHomeMetadata()} />
+        <DashboardSkeleton />
+      </>
+    );
   }
 
   if (error || !user) {
+    const errorMetadata = {
+      title: `Unable to load profile · ${siteMetadata.name}`,
+      description: error || "We couldn't find that GitHub profile.",
+      canonicalPath: username ? `/dashboard/${username}` : '/dashboard',
+    };
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-4">
-        <Card className="w-full max-w-md text-center">
-          <CardHeader>
-            <div className="mx-auto bg-destructive/10 border border-destructive/20 rounded-full p-3 mb-4 w-fit">
-              <AlertCircle className="w-8 h-8 text-destructive" />
-            </div>
-            <CardTitle className="text-2xl">Failed to load data</CardTitle>
-            <CardDescription>{error || "User not found"}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={() => navigate('/')} variant="outline" className="rounded-lg">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Go Back to Home
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <>
+        <SeoHead metadata={errorMetadata} />
+        <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-4">
+          <Card className="w-full max-w-md text-center">
+            <CardHeader>
+              <div className="mx-auto bg-destructive/10 border border-destructive/20 rounded-full p-3 mb-4 w-fit">
+                <AlertCircle className="w-8 h-8 text-destructive" />
+              </div>
+              <CardTitle className="text-2xl">Failed to load data</CardTitle>
+              <CardDescription>{error || "User not found"}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={() => navigate('/')} variant="outline" className="rounded-lg">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Go Back to Home
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/10 flex flex-col overflow-x-hidden">
-      <div className="max-w-[1200px] mx-auto p-4 md:p-6 space-y-3 flex-1 w-full">
+    <>
+      <SeoHead metadata={metadata} />
+      <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/10 flex flex-col overflow-x-hidden">
+        <div className="max-w-[1200px] mx-auto p-4 md:p-6 space-y-3 flex-1 w-full">
         
         {/* --- Header --- */}
         <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 py-2 mb-3">
@@ -452,19 +479,24 @@ export default function Dashboard() {
                     <div className="flex flex-col items-center gap-3">
                       <div className="flex flex-row items-center gap-2 text-amber-500">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                        <span className="text-[10px] font-sans">
-                          API limit reached, try again in {countdown ?? recRetryAfter ?? 60}s.
+                        <span className="text-sm font-sans">
+                          API has reached its limit.
                         </span>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={retryRecommendations}
-                        disabled={countdown !== null && countdown > 0}
-                        className="rounded-lg h-8 px-4 text-[10px] font-sans"
-                      >
-                        {countdown !== null && countdown > 0 ? 'Wait...' : 'Try again'}
-                      </Button>
+                      {countdown !== null && countdown > 0 ? (
+                        <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest">
+                          Retry in {countdown}s
+                        </p>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={retryRecommendations}
+                          className="rounded-lg h-8 px-4 text-[10px] font-sans"
+                        >
+                          Try again
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-2">
@@ -614,6 +646,7 @@ export default function Dashboard() {
         </div>
       </footer>
     </div>
+    </>
   );
 }
 

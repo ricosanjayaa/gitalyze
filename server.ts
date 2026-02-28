@@ -2,8 +2,12 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import type { Request, Response } from 'express';
 import NodeCache from 'node-cache';
-import { getAIRecommendations } from './src/lib/openrouter';
-import type { ScoreBreakdown, GitHubUser, GitHubRepo } from './src/lib/openrouter';
+import path from 'node:path';
+import fs from 'node:fs';
+import { getGroqRecommendations, getRemediationPlan } from './src/lib/groq';
+import type { ScoreBreakdown, GitHubUser, GitHubRepo } from './src/lib/groq';
+import { buildSitemapXml, buildRobotsTxt } from './src/lib/sitemap';
+import { siteConfig } from './site.config';
 
 const githubCache = new NodeCache({ stdTTL: 900 }); // 15 minute TTL
 
@@ -156,17 +160,25 @@ async function startServer() {
   });
 
   app.post('/api/ai/recommendations', async (req: Request, res: Response) => {
+    const body = req.body as {
+      scoreData: ScoreBreakdown;
+      user: GitHubUser;
+      repos: GitHubRepo[];
+    };
+    const { scoreData, user, repos } = body;
+
+    if (!scoreData || !user || !repos) {
+      return res.status(400).json({ message: 'Missing required fields: scoreData, user, or repos' });
+    }
+
+    const forceFallback = process.env.FORCE_AI_RECS === 'true';
+    if (forceFallback) {
+      console.log('[SERVER] FORCE_AI_RECS enabled, returning heuristic recommendations');
+      const fallbackPlan = getRemediationPlan(scoreData, user, repos);
+        return res.json({ recommendations: fallbackPlan, fallback: true, message: 'Heuristic plan; Groq disabled' });
+    }
+
     try {
-      const { scoreData, user, repos } = req.body as {
-        scoreData: ScoreBreakdown;
-        user: GitHubUser;
-        repos: GitHubRepo[];
-      };
-
-      if (!scoreData || !user || !repos) {
-        return res.status(400).json({ message: 'Missing required fields: scoreData, user, or repos' });
-      }
-
       // Skip AI if ALL category scores are great (<=75% of max)
       const MAXIMA: Record<string, number> = { activity: 25, quality: 30, volume: 15, diversity: 10, completeness: 10, maturity: 10 };
       const hasWeakCategory = Object.entries(MAXIMA).some(([k, max]) => {
@@ -179,7 +191,7 @@ async function startServer() {
         return res.json({ recommendations: [] });
       }
 
-      const recommendations = await getAIRecommendations(user, repos);
+      const recommendations = await getGroqRecommendations(user, repos);
       console.log('[SERVER] AI recommendations:', recommendations);
       
       // Return what AI gives - no template fallback
@@ -192,11 +204,13 @@ async function startServer() {
 
       // Skip fallback for rate limit errors - return proper 429 to frontend
       if (status === 429) {
-        const extra: any = {};
+        console.log('[SERVER] Groq rate limit, falling back to remediation plan');
+        const fallbackPlan = getRemediationPlan(scoreData, user, repos);
+        const extra: any = { fallback: true };
         if (error?.details && typeof error.details.retryAfter !== 'undefined') {
           extra.retryAfter = error.details.retryAfter;
         }
-        res.status(429).json({ message: error?.message || 'Rate limit exceeded', error: 'RATE_LIMIT', ...extra });
+        res.status(429).json({ message: error?.message || 'Rate limit exceeded', error: 'RATE_LIMIT', recommendations: fallbackPlan, ...extra });
         return;
       }
 
@@ -209,6 +223,26 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
+  const distDir = path.resolve('dist');
+  const sitemapPath = path.join(distDir, 'sitemap.xml');
+  const robotsPath = path.join(distDir, 'robots.txt');
+
+  app.get('/sitemap.xml', (_req, res) => {
+    if (fs.existsSync(sitemapPath)) {
+      return res.sendFile(sitemapPath);
+    }
+    const xml = buildSitemapXml(siteConfig.siteUrl, siteConfig.routes);
+    res.type('application/xml').send(xml);
+  });
+
+  app.get('/robots.txt', (_req, res) => {
+    if (fs.existsSync(robotsPath)) {
+      return res.sendFile(robotsPath);
+    }
+    const robots = buildRobotsTxt(siteConfig.siteUrl);
+    res.type('text/plain').send(robots);
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -216,6 +250,15 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+
+  } else {
+    app.use(express.static(distDir, { index: false }));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path === '/sitemap.xml' || req.path === '/robots.txt') {
+        return next();
+      }
+      res.sendFile(path.join(distDir, 'index.html'));
+    });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
