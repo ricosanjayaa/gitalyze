@@ -20,6 +20,10 @@ export const metadata: Metadata = {
   verification: {
     google: "bxMOApuAcwtwMKB9mCQmf-bjHE-MtRePe65UmgwopJk",
   },
+  icons: {
+    icon: [{ url: "/favicon.ico" }],
+    shortcut: [{ url: "/favicon.ico" }],
+  },
   metadataBase,
   alternates: {
     canonical: "/",
