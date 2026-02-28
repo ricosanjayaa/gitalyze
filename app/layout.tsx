@@ -1,10 +1,14 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "../src/index.css";
 import siteMetadataJson from "../metadata.json";
 import { Providers } from "@/components/Providers";
 import { getSiteUrl } from "@/lib/site-url";
 
 const metadataBase = new URL(getSiteUrl());
+
+export const viewport: Viewport = {
+  themeColor: siteMetadataJson.themeColor,
+};
 
 export const metadata: Metadata = {
   title: {
@@ -29,7 +33,6 @@ export const metadata: Metadata = {
     url: "/",
     type: "website",
   },
-  themeColor: siteMetadataJson.themeColor,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
