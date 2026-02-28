@@ -40,14 +40,6 @@ export async function getAIRecoomendations(
     .map(r => `${r.name} (${r.stargazers_count || 0}★): ${truncate(r.description, 80)}`)
     .join(' | ');
 
-  const summary = [
-    `Name: ${user.name || user.login}`,
-    `Followers: ${user.followers ?? 0}`,
-    `Public repos: ${user.public_repos ?? 0}`,
-    `Top: ${top || 'none'}`,
-    `Scores: A${Math.round(breakdown.activity || 0)} Q${Math.round(breakdown.quality || 0)} V${Math.round(breakdown.volume || 0)} D${Math.round(breakdown.diversity || 0)} C${Math.round(breakdown.completeness || 0)} M${Math.round(breakdown.maturity || 0)}`,
-  ].join(' | ');
-
   // Determine weak areas (threshold: less than 70% of category max)
   const maxima: Record<string, number> = { activity: 25, quality: 30, volume: 15, diversity: 10, completeness: 10, maturity: 10 };
   const weakAreas = Object.entries(maxima)
@@ -59,9 +51,9 @@ export async function getAIRecoomendations(
     return [];
   }
 
-  // Concise instructions: ask for 1-sentence recommendations of decent length (8-18 words)
-  const system = 'You are a concise GitHub profile advisor. Return ONLY a JSON array of improvement sentences.';
-  const userMsg = `Data: ${summary}. Weak areas: ${weakAreas.join(', ')}. Suggest 1-3 focused improvements per weak area, total 2-4 recommendations. Each recommendation: one sentence, 8-18 words, start with an action verb. Do NOT suggest improvements for areas not listed.`;
+  // Dynamic, engaging recommendations based on actual user data
+  const system = 'You are a senior engineer giving portfolio advice. Be practical, direct, and mentorship-oriented.';
+  const userMsg = `Give 2-4 concise suggestions to improve this GitHub profile as a professional portfolio. User: ${user.name || user.login}, ${user.public_repos} repos, ${user.followers} followers. Top repo: ${top || 'none'}. Missing: ${!user.bio ? 'bio ' : ''}${!user.location ? 'location ' : ''}${!user.blog ? 'blog' : ''}. Rules: Start with action verbs like Add, Pin, Strengthen, Enhance, Showcase. No numbers. No em dashes. Under 20 words each. Focus on what helps their career.`;
 
   const maxAttempts = cfg.maxRetries + 1;
   let lastErr: any = null;
@@ -212,7 +204,5 @@ export function getRemediationPlan(
   repos: GitHubRepo[]
 ): string[] {
   const plan = generateRecommendations(breakdown, user, repos);
-  return plan.map(p =>
-    `${p.text} — Justification: ${p.rationale ?? 'No rationale provided.'} This action addresses the identified signal weaknesses and is anticipated to yield a measurable uplift in the corresponding score within the next measurement cycle. It should be implemented as part of a phased plan with clearly defined KPIs, milestones, and owner accountability.`
-  );
+  return plan.map(p => p.text);
 }

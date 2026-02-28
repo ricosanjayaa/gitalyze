@@ -145,7 +145,8 @@ export function useGithubAnalytics(username: string | undefined) {
 
         const data = await response.json();
         if (!ignore) {
-          setRecommendations(data.recommendations || []);
+          const recs = data.recommendations?.length ? data.recommendations : data.recommendation || [];
+          setRecommendations(recs);
           setRecRetryAfter(null);
         }
       } catch (err: any) {

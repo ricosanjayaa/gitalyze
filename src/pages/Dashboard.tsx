@@ -447,19 +447,21 @@ export default function Dashboard() {
               ) : recError ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-4 min-h-[200px]">
                   {isRecRateLimited ? (
-                    <div className="flex flex-row items-center gap-2 text-amber-500">
-                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                      <span className="text-[10px] font-sans">
-                        API limit reached, try again in {countdown ?? recRetryAfter ?? 60}s.
-                      </span>
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="flex flex-row items-center gap-2 text-amber-500">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span className="text-[10px] font-sans">
+                          API limit reached, try again in {countdown ?? recRetryAfter ?? 60}s.
+                        </span>
+                      </div>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={retryRecommendations}
                         disabled={countdown !== null && countdown > 0}
-                        className="h-6 px-2 text-[9px] font-sans shrink-0"
+                        className="rounded-lg h-8 px-4 text-[10px] font-sans"
                       >
-                        {countdown !== null && countdown > 0 ? 'Wait' : 'Retry'}
+                        {countdown !== null && countdown > 0 ? 'Wait...' : 'Try again'}
                       </Button>
                     </div>
                   ) : (
