@@ -1,5 +1,5 @@
 {
-  "name": "gitmetrics",
+  "name": "gitalyze",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,8 +9,8 @@
     "preview": "NODE_ENV=production bun ./server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "generate:sitemap": "bun scripts/generate-sitemap.ts",
-    "postbuild": "bun run generate:sitemap"
+    "generate:sitemap": "tsx scripts/generate-sitemap.ts",
+    "postbuild": "tsx scripts/generate-sitemap.ts"
   },
   "dependencies": {
     "@google/genai": "^1.43.0",

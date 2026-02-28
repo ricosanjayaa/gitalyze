@@ -1,9 +1,9 @@
 {
-  "name": "Gitmetrics",
+  "name": "Gitalyze",
   "description": "A comprehensive dashboard to visualize GitHub user and repository analytics, including profile score, stars, forks, language distribution, and growth trends. Optimize your GitHub presence with data-driven insights.",
-  "origin": "https://gitmetrics.vercel.app",
+  "origin": "https://gitalyze.vercel.app",
   "keywords": [
-    "Gitmetrics",
+    "Gitalyze",
     "GitHub analytics",
     "open source metrics",
     "developer scorecard",
