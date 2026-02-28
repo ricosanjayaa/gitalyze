@@ -1,17 +1,19 @@
+'use client';
+
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Search } from 'lucide-react';
 
 export function SearchInput() {
   const [username, setUsername] = useState('');
-  const navigate = useNavigate();
+  const router = useRouter();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (username.trim()) {
-      navigate(`/dashboard/${username.trim()}`);
+      router.push(`/dashboard/${username.trim()}`);
     }
   };
 

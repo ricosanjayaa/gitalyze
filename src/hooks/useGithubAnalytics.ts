@@ -13,15 +13,22 @@ import {
   isSameQuarter
 } from 'date-fns';
 
-const CLIENT_CACHE_TTL_MS = Number(import.meta.env.VITE_RECOMMENDATION_CACHE_TTL_MS) || 15 * 60 * 1000;
+const CLIENT_CACHE_TTL_MS = Number(process.env.NEXT_PUBLIC_RECOMMENDATION_CACHE_TTL_MS) || 15 * 60 * 1000;
 
-export function useGithubAnalytics(username: string | undefined) {
-  const [user, setUser] = useState<GitHubUser | null>(null);
-  const [repos, setRepos] = useState<GitHubRepo[]>([]);
+interface InitialAnalyticsData {
+  user?: GitHubUser | null;
+  repos?: GitHubRepo[];
+  scoreData?: ScoreBreakdown | null;
+  recommendations?: string[];
+}
+
+export function useGithubAnalytics(username: string | undefined, initial?: InitialAnalyticsData) {
+  const [user, setUser] = useState<GitHubUser | null>(initial?.user ?? null);
+  const [repos, setRepos] = useState<GitHubRepo[]>(initial?.repos ?? []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [scoreData, setScoreData] = useState<ScoreBreakdown | null>(null);
-  const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [scoreData, setScoreData] = useState<ScoreBreakdown | null>(initial?.scoreData ?? null);
+  const [recommendations, setRecommendations] = useState<string[]>(initial?.recommendations ?? []);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [loadingRecs, setLoadingRecs] = useState(true);
   const [recError, setRecError] = useState<string | null>(null);
@@ -30,6 +37,7 @@ export function useGithubAnalytics(username: string | undefined) {
   const [refetchTrigger, setRefetchTrigger] = useState(0);
   const [recRetryTrigger, setRecRetryTrigger] = useState(0);
   const hasFetchedRecs = useRef(false);
+  const hasAppliedInitial = useRef(false);
 
   // Effect to reset state when username changes
   useEffect(() => {
@@ -43,7 +51,24 @@ export function useGithubAnalytics(username: string | undefined) {
     setIsRecRateLimited(false);
     setError(null);
     hasFetchedRecs.current = false;
+    hasAppliedInitial.current = false;
   }, [username]);
+
+  useEffect(() => {
+    if (!username || hasAppliedInitial.current) return;
+    const hasInitialCore = Boolean(initial?.user && initial?.repos && initial?.scoreData);
+    if (!hasInitialCore) return;
+
+    setUser(initial?.user ?? null);
+    setRepos(initial?.repos ?? []);
+    setScoreData(initial?.scoreData ?? null);
+    setRecommendations(initial?.recommendations ?? []);
+    setLoading(false);
+    setLoadingRecs(false);
+    setLastUpdated(new Date());
+    hasFetchedRecs.current = true;
+    hasAppliedInitial.current = true;
+  }, [username, initial?.user, initial?.repos, initial?.scoreData, initial?.recommendations]);
 
   // Effect for fetching core GitHub data
   useEffect(() => {
@@ -51,6 +76,11 @@ export function useGithubAnalytics(username: string | undefined) {
 
     async function loadCoreData() {
       if (!username) {
+        setLoading(false);
+        return;
+      }
+
+      if (hasAppliedInitial.current && refetchTrigger === 0) {
         setLoading(false);
         return;
       }

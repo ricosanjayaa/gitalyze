@@ -1,3 +1,5 @@
+"use client";
+
 interface LinkifyProps {
   text: string;
 }
