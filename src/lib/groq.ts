@@ -20,6 +20,7 @@ const recommendationCache = new Map<string, { data: string[]; timestamp: number 
 const retrievalPromises = new Map<string, Promise<string[]>>();
 const cooldownMs = Number(process.env.GROQ_COOLDOWN_MS) || 60 * 1000;
 const cooldowns = new Map<string, number>();
+const repoSummaryCache = new Map<string, { data: string; timestamp: number }>();
 
 function getCachedRecommendations(username: string): string[] | null {
   const key = username.toLowerCase();
@@ -51,10 +52,22 @@ function setCooldown(username: string) {
   return until;
 }
 
+function getCachedRepoSummary(key: string): string | null {
+  const cached = repoSummaryCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedRepoSummary(key: string, data: string): void {
+  repoSummaryCache.set(key, { data, timestamp: Date.now() });
+}
+
 function getGroqConfig() {
   return {
     apiKey: process.env.GROQ_API_KEY,
-    model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
+    model: process.env.GROQ_MODEL || "whisper-large-v3-turbo",
     timeoutMS: Number(process.env.GROQ_TIMEOUT_MS) || 15000,
     maxRetries: Number(process.env.GROQ_MAX_RETRIES) || 2,
   };
@@ -281,6 +294,91 @@ export async function getGroqRecommendations(
   } finally {
     retrievalPromises.delete(cacheKey);
   }
+}
+
+export async function getGroqRepoSummary(input: {
+  owner: string;
+  repoName: string;
+  description: string;
+  readme: string;
+  topLanguages: string[];
+}): Promise<string> {
+  const cfg = getGroqConfig();
+  if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
+
+  const cacheKey = `${input.owner}/${input.repoName}`.toLowerCase();
+  const cached = getCachedRepoSummary(cacheKey);
+  if (cached) return cached;
+
+  const readmeSnippet = input.readme.slice(0, 2000);
+  const prompt = [
+    "You are a technical writer. Write a concise 2-3 sentence summary of a GitHub repository.",
+    "Focus on the description and README content. Mention the primary language if provided.",
+    "Return plain text only. No markdown, no bullets.",
+    "",
+    `Repository: ${input.owner}/${input.repoName}`,
+    `Description: ${input.description || "(none)"}`,
+    `Top languages: ${input.topLanguages.slice(0, 3).join(", ") || "(unknown)"}`,
+    "README excerpt:",
+    readmeSnippet || "(none)",
+  ].join("\n");
+
+  const groq = new Groq({ apiKey: cfg.apiKey });
+  const response = await groq.chat.completions.create({
+    messages: [{ role: "user", content: prompt }],
+    model: cfg.model,
+    temperature: 0.7,
+    max_completion_tokens: 300,
+    top_p: 1,
+  });
+
+  const text = extractText(response);
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
+  const finalText = cleaned.replace(/^"|"$/g, "");
+  setCachedRepoSummary(cacheKey, finalText);
+  return finalText;
+}
+
+export async function getGroqRepoHealthSummary(input: {
+  owner: string;
+  repoName: string;
+  scorePercent: number;
+  label: string;
+  reasons: string[];
+}): Promise<string> {
+  const cfg = getGroqConfig();
+  if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
+
+  const cacheKey = `health_${input.owner}/${input.repoName}`.toLowerCase();
+  const cached = getCachedRepoSummary(cacheKey);
+  if (cached) return cached;
+
+  const prompt = [
+    "You are a product analyst. Write a concise 1-2 sentence health summary for a GitHub repository.",
+    "Use the health score, label, and reasons. Keep it factual and short.",
+    "Return plain text only. No markdown, no bullets.",
+    "",
+    `Repository: ${input.owner}/${input.repoName}`,
+    `Health score: ${input.scorePercent}% (${input.label})`,
+    `Reasons: ${input.reasons.join("; ") || "(none)"}`,
+  ].join("\n");
+
+  const groq = new Groq({ apiKey: cfg.apiKey });
+  const response = await groq.chat.completions.create({
+    messages: [{ role: "user", content: prompt }],
+    model: cfg.model,
+    temperature: 0.5,
+    max_completion_tokens: 200,
+    top_p: 1,
+  });
+
+  const text = extractText(response);
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
+  const finalText = cleaned.replace(/^"|"$/g, "");
+  setCachedRepoSummary(cacheKey, finalText);
+  return finalText;
 }
 
 export function getRemediationPlan(_breakdown: ScoreBreakdown, user: GitHubUser, repos: GitHubRepo[]): string[] {

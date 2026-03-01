@@ -38,12 +38,5 @@ export async function generateMetadata({
 
 export default async function Page({ params }: { params: Promise<{ owner: string; repoName: string }> }) {
   const { owner, repoName } = await params;
-
-  try {
-    const repo = await fetchRepoDetail(owner, repoName);
-    return <RepoDetail owner={owner} repoName={repoName} initialRepoData={repo} />;
-  } catch {
-    // Fall back to client fetching to preserve behavior.
-    return <RepoDetail owner={owner} repoName={repoName} />;
-  }
+  return <RepoDetail owner={owner} repoName={repoName} />;
 }

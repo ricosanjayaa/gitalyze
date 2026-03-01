@@ -639,9 +639,23 @@ export default function Dashboard({
                     const percent = prev > 0 ? Math.round((diff / prev) * 100) : (last > 0 ? 100 : 0);
                     
                     return (
-                      <span className="flex items-center gap-0.5 ml-1 text-muted-foreground font-mono tabular-nums">
-                        {diff > 0 ? <TrendingUp className="w-3 h-3" /> : diff < 0 ? <TrendingDown className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
-                        {Math.abs(percent)}%
+                      <span
+                        className="group inline-flex items-center gap-1 ml-1 rounded-full border border-border/40 bg-secondary/20 px-2 py-0.5 text-[10px] font-mono"
+                        title="Latest quarter vs previous"
+                      >
+                        {diff > 0 ? (
+                          <TrendingUp className="w-3 h-3 text-emerald-500" />
+                        ) : diff < 0 ? (
+                          <TrendingDown className="w-3 h-3 text-rose-500" />
+                        ) : (
+                          <Minus className="w-3 h-3 text-muted-foreground" />
+                        )}
+                        <span className={diff > 0 ? 'text-emerald-500' : diff < 0 ? 'text-rose-500' : 'text-muted-foreground'}>
+                          {Math.abs(percent)}%
+                        </span>
+                        <span className="ml-1 text-[9px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                          Latest quarter vs previous
+                        </span>
                       </span>
                     );
                   })()}
@@ -650,7 +664,9 @@ export default function Dashboard({
               </div>
             </CardHeader>
             <CardContent className="p-4 flex-1 min-h-0 flex flex-col">
-              <div className="flex-grow w-full min-h-0">
+              <div className="relative flex-grow w-full min-h-0">
+                <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-card to-transparent" />
+                <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-card to-transparent" />
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={growthData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
                     <defs>
@@ -719,23 +735,6 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* --- Footer --- */}
-      <footer className="py-6 bg-background/50 backdrop-blur-sm">
-        <div className="max-w-[1200px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] text-muted-foreground font-mono">
-          <span className="font-sans">Copyright © {new Date().getFullYear()} <a href="https://github.com/ricosanjayaa" target="_blank" rel="noopener noreferrer" className="hover:text-foreground hover:underline transition-colors font-sans">Rico Sanjaya</a></span>
-          <span className="font-sans">
-            Open source on{" "}
-            <a
-              href="https://github.com/ricosanjayaa/gitalyze"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-foreground hover:underline transition-colors font-sans"
-            >
-              GitHub
-            </a>
-          </span>
-        </div>
-      </footer>
       </div>
   );
 }
