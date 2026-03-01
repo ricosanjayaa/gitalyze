@@ -7,6 +7,10 @@ type SummaryRequest = {
   description?: string;
   readme?: string;
   topLanguages?: string[];
+  stars?: number;
+  forks?: number;
+  openIssues?: number;
+  lastPush?: string;
 };
 
 function buildDeterministicSummary(input: SummaryRequest) {
@@ -31,6 +35,14 @@ function buildDeterministicSummary(input: SummaryRequest) {
   }
 
   return sentences.join(" ");
+}
+
+function isValidSummary(summary: string, repoName: string) {
+  const normalized = summary.trim();
+  if (normalized.length < 40) return false;
+  if (!normalized.endsWith(".") && !normalized.endsWith("!") && !normalized.endsWith("?")) return false;
+  if (repoName && !normalized.toLowerCase().includes(repoName.toLowerCase())) return false;
+  return true;
 }
 
 function extractReadmeSnippet(readmeText: string) {
@@ -76,8 +88,16 @@ export async function POST(req: Request) {
       description: body.description ?? "",
       readme: body.readme ?? "",
       topLanguages: Array.isArray(body.topLanguages) ? body.topLanguages : [],
+      stars: body.stars ?? 0,
+      forks: body.forks ?? 0,
+      openIssues: body.openIssues ?? 0,
+      lastPush: body.lastPush ?? "",
     });
-    return NextResponse.json({ summary: summary || deterministic });
+    const cleaned = summary || "";
+    if (!isValidSummary(cleaned, body.repoName)) {
+      return NextResponse.json({ summary: deterministic, fallback: true, message: "AI summary fallback" });
+    }
+    return NextResponse.json({ summary: cleaned });
   } catch (error: any) {
     console.error(error);
     return NextResponse.json({

@@ -258,11 +258,17 @@ export default function Dashboard({
 
         {/* --- Hero KPIs --- */}
         <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3 items-stretch">
-          <KpiCard title="Profile score" value={scoreData?.total} grade={scoreData?.grade} />
-          <KpiCard title="Total stars" value={totalStars} />
-          <KpiCard title="Total forks" value={totalForks} />
-          <KpiCard title="Active repos" value={activeRepos} total={user.public_repos} />
-          <KpiCard title="Followers" value={user.followers} />
+          {loading ? (
+            [...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)
+          ) : (
+            <>
+              <KpiCard title="Profile score" value={scoreData?.total} grade={scoreData?.grade} />
+              <KpiCard title="Total stars" value={totalStars} />
+              <KpiCard title="Total forks" value={totalForks} />
+              <KpiCard title="Active repos" value={activeRepos} total={user.public_repos} />
+              <KpiCard title="Followers" value={user.followers} />
+            </>
+          )}
         </div>
 
         {/* --- Middle Section: Top Repos & Languages --- */}
@@ -275,7 +281,14 @@ export default function Dashboard({
             </CardHeader>
             <CardContent className="p-0 flex flex-col h-full overflow-hidden items-stretch">
               <div className="divide-y divide-border/30 overflow-y-auto flex-1 custom-scrollbar flex flex-col min-h-0">
-                {topRepos.slice(0, 8).map((repo, i) => (
+                {loading && topRepos.length === 0 && (
+                  <div className="p-6 space-y-3">
+                    {[...Array(5)].map((_, i) => (
+                      <Skeleton key={i} className="h-10 rounded-lg" />
+                    ))}
+                  </div>
+                )}
+                {!loading && topRepos.slice(0, 8).map((repo, i) => (
                   <TooltipProvider key={repo.id || i}>
                     <UITooltip>
                       <TooltipTrigger asChild>
@@ -329,7 +342,7 @@ export default function Dashboard({
                     </UITooltip>
                   </TooltipProvider>
                 ))}
-                {topRepos.length === 0 && (
+                {!loading && topRepos.length === 0 && (
                   <div className="px-6 py-8 text-center text-xs text-muted-foreground font-sans">
                     No repositories found.
                   </div>
@@ -354,7 +367,11 @@ export default function Dashboard({
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Languages</CardTitle>
             </CardHeader>
             <CardContent className="p-4 grid grid-rows-[auto_auto] gap-4 h-full overflow-hidden">
-              {languageData.length > 0 ? (
+              {loading && languageData.length === 0 ? (
+                <div className="row-span-2 flex items-center justify-center text-center text-xs text-muted-foreground py-8 font-sans">
+                  <Skeleton className="h-32 w-32 rounded-full" />
+                </div>
+              ) : languageData.length > 0 ? (
                 <>
                   <div className="relative h-[180px] sm:h-[200px] md:h-[220px]">
                     <ResponsiveContainer width="100%" height="100%">
@@ -436,7 +453,14 @@ export default function Dashboard({
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Performance</CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-3 flex-1 min-h-0 overflow-y-auto flex flex-col justify-center">
-              {scoreData && (
+              {loading && !scoreData && (
+                <div className="space-y-3">
+                  {[...Array(4)].map((_, i) => (
+                    <Skeleton key={i} className="h-6 rounded-lg" />
+                  ))}
+                </div>
+              )}
+              {!loading && scoreData && (
                 [ 
                   { key: 'activity', max: 20, tip: 'Recent pushes and recency of work.' },
                   { key: 'quality', max: 25, tip: 'README, topics, license, and release signals on top repos.' },
@@ -471,6 +495,9 @@ export default function Dashboard({
                     </div>
                   );
                 })
+              )}
+              {!loading && !scoreData && (
+                <div className="text-xs text-muted-foreground font-sans text-center">No score data available.</div>
               )}
             </CardContent>
           </Card>
@@ -597,24 +624,16 @@ export default function Dashboard({
                     </motion.ul>
 	                  ) : (
 	                    <div className="flex-1 flex items-center justify-center min-h-[200px]">
-	                      {hasDeficits ? (
-	                        <div className="flex flex-col items-center justify-center gap-2 min-h-[200px] text-center px-4">
-	                          <p className="text-[11px] text-muted-foreground font-sans">
-	                            No AI recommendations returned - showing none right now.
-	                          </p>
-	                          <Button
-	                            variant="outline"
-	                            size="sm"
-	                            onClick={retryRecommendations}
-	                            className="h-7 px-3 text-[10px] font-sans"
-	                          >
-	                            Try again
-	                          </Button>
-	                        </div>
-	                      ) : (
-	                        <p className="text-[11px] text-muted-foreground font-sans text-center px-4">
-	                          No recommendations needed, keep it up!
-	                        </p>
+                      {hasDeficits ? (
+                        <div className="flex flex-col items-center justify-center gap-2 min-h-[200px] text-center px-4">
+                          <p className="text-[11px] text-muted-foreground font-sans">
+                            No AI recommendations returned. You may already be in good shape.
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground font-sans text-center px-4">
+                          No recommendations needed, keep it up!
+                        </p>
 	                      )}
 	                    </div>
 	                  )}
@@ -625,9 +644,9 @@ export default function Dashboard({
 
           {/* Repo Growth (Quarterly Deltas - Full Area Chart) */}
           <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col h-[320px]">
-            <CardHeader className="px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Growth</CardTitle>
-              <div className="flex items-center gap-1.5">
+            <CardHeader className="px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between space-y-0 min-w-0">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans shrink-0">Growth</CardTitle>
+              <div className="flex items-center gap-1.5 whitespace-nowrap">
                 <span className={`text-[10px] font-mono font-bold flex items-center gap-1 tabular-nums ${
                   growthData.length > 0 && growthData[growthData.length-1].count > 0 ? 'text-foreground' : 'text-muted-foreground'
                 }`}>
@@ -639,10 +658,7 @@ export default function Dashboard({
                     const percent = prev > 0 ? Math.round((diff / prev) * 100) : (last > 0 ? 100 : 0);
                     
                     return (
-                      <span
-                        className="group inline-flex items-center gap-1 ml-1 rounded-full border border-border/40 bg-secondary/20 px-2 py-0.5 text-[10px] font-mono"
-                        title="Latest quarter vs previous"
-                      >
+                      <span className="inline-flex items-center gap-1 ml-1 rounded-full border border-border/40 bg-secondary/20 px-2 py-0.5 text-[10px] font-mono">
                         {diff > 0 ? (
                           <TrendingUp className="w-3 h-3 text-emerald-500" />
                         ) : diff < 0 ? (
@@ -653,9 +669,6 @@ export default function Dashboard({
                         <span className={diff > 0 ? 'text-emerald-500' : diff < 0 ? 'text-rose-500' : 'text-muted-foreground'}>
                           {Math.abs(percent)}%
                         </span>
-                        <span className="ml-1 text-[9px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-                          Latest quarter vs previous
-                        </span>
                       </span>
                     );
                   })()}
@@ -664,65 +677,75 @@ export default function Dashboard({
               </div>
             </CardHeader>
             <CardContent className="p-4 flex-1 min-h-0 flex flex-col">
-              <div className="relative flex-grow w-full min-h-0">
-                <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-card to-transparent" />
-                <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-card to-transparent" />
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={growthData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorGrowth" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={chartColors.chartLine} stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor={chartColors.chartLine} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} opacity={0.3} />
-                    <XAxis 
-                      dataKey="shortName" 
-                      tick={{ fill: chartColors.textSecondary, fontSize: 10, fontFamily: 'var(--font-sans)' }} 
-                      axisLine={false}
-                      tickLine={false}
-                      interval={1}
-                      tickMargin={8} 
-                    />
-                    <YAxis 
-                      tick={{ fill: chartColors.textSecondary, fontSize: 10, fontFamily: 'var(--font-sans)' }} 
-                      axisLine={false}
-                      tickLine={false}
-                      tickMargin={8}
-                      width={30}
-                    />
-                    <Tooltip 
-                      wrapperStyle={{ verticalAlign: 'top' }}
-                      contentStyle={{ 
-                        backgroundColor: chartColors.tooltipBg, 
-                        borderColor: chartColors.tooltipBorder, 
-                        borderRadius: '8px',
-                        boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                      }}
-                      itemStyle={{ color: chartColors.textPrimary, fontSize: '12px' }}
-                      labelStyle={{ color: chartColors.textSecondary, fontSize: '11px', marginBottom: '4px' }}
-                      formatter={(value: number, name: string) => {
-                        if (name === "count") return [String(value), "New Repos"];
-                        return [String(value), name];
-                      }}
-                      labelFormatter={(label, payload) => {
-                        const data = payload?.[0]?.payload;
-                        if (data) return data.name;
-                        return label;
-                      }}
-                    />
-                    <Area 
-                      type="monotone" 
-                      dataKey="count" 
-                      stroke={chartColors.chartLine} 
-                      strokeWidth={2} 
-                      fill="url(#colorGrowth)" 
-                      fillOpacity={1}
-                      activeDot={{ r: 4, strokeWidth: 0, fill: chartColors.chartLine }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              {loading && growthData.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <Skeleton className="h-40 w-full rounded-lg" />
+                </div>
+              ) : growthData.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground font-sans">
+                  No growth data available.
+                </div>
+              ) : (
+                <div className="relative flex-grow w-full min-h-0">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-card to-transparent" />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-card to-transparent" />
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={growthData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorGrowth" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={chartColors.chartLine} stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor={chartColors.chartLine} stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} opacity={0.3} />
+                      <XAxis 
+                        dataKey="shortName" 
+                        tick={{ fill: chartColors.textSecondary, fontSize: 10, fontFamily: 'var(--font-sans)' }} 
+                        axisLine={false}
+                        tickLine={false}
+                        interval={1}
+                        tickMargin={8} 
+                      />
+                      <YAxis 
+                        tick={{ fill: chartColors.textSecondary, fontSize: 10, fontFamily: 'var(--font-sans)' }} 
+                        axisLine={false}
+                        tickLine={false}
+                        tickMargin={8}
+                        width={30}
+                      />
+                      <Tooltip 
+                        wrapperStyle={{ verticalAlign: 'top' }}
+                        contentStyle={{ 
+                          backgroundColor: chartColors.tooltipBg, 
+                          borderColor: chartColors.tooltipBorder, 
+                          borderRadius: '8px',
+                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                        }}
+                        itemStyle={{ color: chartColors.textPrimary, fontSize: '12px' }}
+                        labelStyle={{ color: chartColors.textSecondary, fontSize: '11px', marginBottom: '4px' }}
+                        formatter={(value: number, name: string) => {
+                          if (name === "count") return [String(value), "New Repos"];
+                          return [String(value), name];
+                        }}
+                        labelFormatter={(label, payload) => {
+                          const data = payload?.[0]?.payload;
+                          if (data) return data.name;
+                          return label;
+                        }}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="count" 
+                        stroke={chartColors.chartLine} 
+                        strokeWidth={2} 
+                        fill="url(#colorGrowth)" 
+                        fillOpacity={1}
+                        activeDot={{ r: 4, strokeWidth: 0, fill: chartColors.chartLine }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -745,7 +768,7 @@ function DashboardSkeleton() {
   return (
     <div className="min-h-screen bg-background p-4 md:p-6 font-sans">
       <div className="max-w-[1200px] mx-auto space-y-4">
-        <div className="flex items-center justify-between border-b border-border/40 pb-4">
+        <div className="flex items-center justify-between pb-4">
           <div className="flex items-center gap-3">
             <Skeleton className="h-8 w-8 rounded-full" />
             <div className="space-y-1">

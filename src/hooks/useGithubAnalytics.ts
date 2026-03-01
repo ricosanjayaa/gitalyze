@@ -41,6 +41,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   const requestIdRef = useRef(0);
   const coreFetchInFlightRef = useRef(false);
   const recsFetchInFlightRef = useRef(false);
+  const recsRequestKeyRef = useRef<string | null>(null);
   const debugCounters = useRef({ core: 0, snapshotApplied: 0, deterministicRecs: 0, aiRecs: 0 });
 
   // Effect to reset state when username changes
@@ -62,6 +63,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
     hasAppliedInitial.current = false;
     coreFetchInFlightRef.current = false;
     recsFetchInFlightRef.current = false;
+    recsRequestKeyRef.current = null;
   }, [username]);
 
   useEffect(() => {
@@ -165,6 +167,12 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         if(scoreData && !repos.length) setLoadingRecs(false)
         return;
       }
+
+      const requestKey = `${user.login}:${scoreData.total ?? 0}:${repos.length}:${recRetryTrigger}`;
+      if (recsRequestKeyRef.current === requestKey && recRetryTrigger === 0) {
+        return;
+      }
+      recsRequestKeyRef.current = requestKey;
 
       try {
         // Mark in-flight as early as possible to avoid double runs when effects re-fire quickly.

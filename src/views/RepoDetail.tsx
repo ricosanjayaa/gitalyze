@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import React, { useMemo, useState, useEffect } from 'react'
+import React, { useMemo, useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -94,6 +94,8 @@ export default function RepoDetail({
   const [healthSummaryNote, setHealthSummaryNote] = useState<string | null>(null)
   const [copied, setCopied] = useState<'https' | 'ssh' | null>(null)
   const [actionsOpen, setActionsOpen] = useState(false)
+  const summaryRequestRef = useRef<{ key: string | null; inFlight: boolean }>({ key: null, inFlight: false })
+  const healthRequestRef = useRef<{ key: string | null; inFlight: boolean }>({ key: null, inFlight: false })
 
   useEffect(() => {
     let isMounted = true
@@ -183,7 +185,16 @@ export default function RepoDetail({
       }))
   }, [analytics])
 
-  const languagePalette = ['bg-blue-500', 'bg-amber-500', 'bg-violet-500', 'bg-emerald-500', 'bg-rose-500', 'bg-cyan-500']
+  const languagePalette = [
+    'bg-foreground/80',
+    'bg-foreground/70',
+    'bg-foreground/60',
+    'bg-foreground/50',
+    'bg-foreground/40',
+    'bg-foreground/30',
+    'bg-foreground/20',
+    'bg-foreground/10',
+  ]
 
   const readmeText = useMemo(() => (readme ?? '').trim(), [readme])
 
@@ -197,10 +208,17 @@ export default function RepoDetail({
   }, [repo, readmeText, languageRows])
 
   useEffect(() => {
-    if (!repo) return
+    if (!repo || readmeLoading) return
+    const requestKey = `${repo.full_name}:${readmeText.length}:${languageRows.map(row => row.language).join(',')}:${repo.stargazers_count}:${repo.forks_count}:${repo.open_issues_count}:${repo.pushed_at}`
+    if (summaryRequestRef.current.inFlight) return
+    if (summaryRequestRef.current.key === requestKey && summaryText) {
+      setSummaryLoading(false)
+      return
+    }
 
     const run = async () => {
       try {
+        summaryRequestRef.current = { key: requestKey, inFlight: true }
         setSummaryLoading(true)
         setSummaryNote(null)
         const res = await fetch('/api/ai/repo-summary', {
@@ -212,6 +230,10 @@ export default function RepoDetail({
             description: repo.description ?? '',
             readme: readmeText,
             topLanguages: languageRows.map(row => row.language),
+            stars: repo.stargazers_count ?? 0,
+            forks: repo.forks_count ?? 0,
+            openIssues: repo.open_issues_count ?? 0,
+            lastPush: repo.pushed_at ?? '',
           }),
         })
 
@@ -225,18 +247,26 @@ export default function RepoDetail({
         setSummaryText(deterministicSummary)
         setSummaryNote(err?.message || 'AI summary unavailable')
       } finally {
+        summaryRequestRef.current = { key: requestKey, inFlight: false }
         setSummaryLoading(false)
       }
     }
 
     run()
-  }, [repo, owner, readmeText, languageRows, deterministicSummary])
+  }, [repo, owner, readmeText, languageRows, deterministicSummary, readmeLoading, summaryText])
 
   useEffect(() => {
     if (!analytics || !repo) return
+    const requestKey = `${repo.full_name}:${analytics.health.scorePercent}:${analytics.health.label}:${analytics.health.reasons.join('|')}`
+    if (healthRequestRef.current.inFlight) return
+    if (healthRequestRef.current.key === requestKey && healthSummary) {
+      setHealthSummaryLoading(false)
+      return
+    }
 
     const run = async () => {
       try {
+        healthRequestRef.current = { key: requestKey, inFlight: true }
         setHealthSummaryLoading(true)
         setHealthSummaryNote(null)
         const res = await fetch('/api/ai/repo-health-summary', {
@@ -259,12 +289,13 @@ export default function RepoDetail({
         setHealthSummary('')
         setHealthSummaryNote(err?.message || 'AI summary unavailable')
       } finally {
+        healthRequestRef.current = { key: requestKey, inFlight: false }
         setHealthSummaryLoading(false)
       }
     }
 
     run()
-  }, [analytics, repo, owner])
+  }, [analytics, repo, owner, healthSummary])
 
   async function copyToClipboard(kind: 'https' | 'ssh') {
     if (!cloneUrls) return
@@ -453,19 +484,17 @@ export default function RepoDetail({
                   <Skeleton className="h-[140px] rounded-lg" />
                 ) : readmeError ? (
                   <div className="text-xs text-muted-foreground font-sans">{readmeError}</div>
+                ) : summaryLoading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-4/5" />
+                    <Skeleton className="h-4 w-3/5" />
+                  </div>
                 ) : !summaryText ? (
                   <div className="text-xs text-muted-foreground font-sans">Summary unavailable.</div>
                 ) : (
                   <div className="space-y-3">
                     <div className="text-sm leading-relaxed font-sans text-foreground/90">
-                      {summaryLoading ? (
-                        <div className="space-y-2">
-                          <Skeleton className="h-4 w-4/5" />
-                          <Skeleton className="h-4 w-3/5" />
-                        </div>
-                      ) : (
-                        <p>{summaryText}</p>
-                      )}
+                      <p>{summaryText}</p>
                     </div>
                     {summaryNote && (
                       <div className="text-[10px] text-muted-foreground/80 font-sans leading-snug">{summaryNote}</div>
@@ -912,7 +941,7 @@ function RepoDetailSkeleton() {
   return (
     <div className="min-h-screen bg-background p-4 md:p-6">
       <div className="max-w-[1100px] mx-auto space-y-4">
-        <div className="flex items-center justify-between border-b border-border/30 pb-4">
+        <div className="flex items-center justify-between pb-4">
           <Skeleton className="h-8 w-8 rounded-full" />
           <Skeleton className="h-8 w-8 rounded-full" />
         </div>

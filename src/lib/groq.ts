@@ -67,7 +67,7 @@ function setCachedRepoSummary(key: string, data: string): void {
 function getGroqConfig() {
   return {
     apiKey: process.env.GROQ_API_KEY,
-    model: process.env.GROQ_MODEL || "whisper-large-v3-turbo",
+    model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
     timeoutMS: Number(process.env.GROQ_TIMEOUT_MS) || 15000,
     maxRetries: Number(process.env.GROQ_MAX_RETRIES) || 2,
   };
@@ -91,7 +91,7 @@ function buildPrompt(user: GitHubUser, repos: GitHubRepo[], breakdown?: ScoreBre
   }).length;
 
   const system =
-    "You are a senior engineer mentoring a developer. Give 2-4 concise recommendations as a JSON array of strings. Start each with an action verb. If you are given a diagnosis and selected actions, only rewrite those and do not invent facts. If there are no meaningful recommendations, return [].";
+    "You are a senior engineer mentoring a developer. Give 2-4 concise recommendations as a JSON array of strings. Start each with an action verb. If you are given a diagnosis and selected actions, only rewrite those and do not invent facts. If there are no meaningful recommendations, return []. Do not include reasoning, analysis, or <think> tags.";
   const isProfileOnly = top?.name === user.login;
   const userMsg = `${user.login}: ${user.public_repos} repo, ${accountAge}yr, ${user.followers} followers, ${
     languages.slice(0, 3).join(",") || "-"
@@ -122,6 +122,15 @@ function extractText(body: any): string {
   if (Array.isArray(choice) && choice.length > 0 && typeof choice[0] === "string") return choice[0];
   if (typeof body?.text === "string") return body.text;
   return "";
+}
+
+function sanitizeAiText(input: string): string {
+  if (!input) return "";
+  return input
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^\s*(analysis|thinking):[\s\S]*?\n/gi, "")
+    .replace(/^\s*(analysis|thinking):/gi, "")
+    .trim();
 }
 
 function buildHybridPrompt(input: {
@@ -206,7 +215,7 @@ export async function getGroqRecommendations(
         });
         const body = await response;
         console.log("[AI] Raw response:", JSON.stringify(body).slice(0, 500));
-        const text = extractText(body);
+        const text = sanitizeAiText(extractText(body));
         console.log("[AI] Extracted text:", text.slice(0, 300));
 
         let arr: string[] | null = null;
@@ -302,6 +311,10 @@ export async function getGroqRepoSummary(input: {
   description: string;
   readme: string;
   topLanguages: string[];
+  stars: number;
+  forks: number;
+  openIssues: number;
+  lastPush: string;
 }): Promise<string> {
   const cfg = getGroqConfig();
   if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
@@ -313,12 +326,16 @@ export async function getGroqRepoSummary(input: {
   const readmeSnippet = input.readme.slice(0, 2000);
   const prompt = [
     "You are a technical writer. Write a concise 2-3 sentence summary of a GitHub repository.",
-    "Focus on the description and README content. Mention the primary language if provided.",
-    "Return plain text only. No markdown, no bullets.",
+    "Must include the repository name and description (if available).",
+    "Mention one concrete metric (stars, forks, open issues, or last push) and the primary language if provided.",
+    "Return plain text only. No markdown, no bullets, no placeholders, no fragments.",
+    "Do not include reasoning, analysis, or <think> tags.",
     "",
     `Repository: ${input.owner}/${input.repoName}`,
     `Description: ${input.description || "(none)"}`,
     `Top languages: ${input.topLanguages.slice(0, 3).join(", ") || "(unknown)"}`,
+    `Stars: ${input.stars} · Forks: ${input.forks} · Open issues: ${input.openIssues}`,
+    `Last push: ${input.lastPush || "(unknown)"}`,
     "README excerpt:",
     readmeSnippet || "(none)",
   ].join("\n");
@@ -332,7 +349,7 @@ export async function getGroqRepoSummary(input: {
     top_p: 1,
   });
 
-  const text = extractText(response);
+  const text = sanitizeAiText(extractText(response));
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
   const finalText = cleaned.replace(/^"|"$/g, "");
@@ -356,8 +373,10 @@ export async function getGroqRepoHealthSummary(input: {
 
   const prompt = [
     "You are a product analyst. Write a concise 1-2 sentence health summary for a GitHub repository.",
-    "Use the health score, label, and reasons. Keep it factual and short.",
-    "Return plain text only. No markdown, no bullets.",
+    "The first sentence must include the score percent and label.",
+    "Use the reasons to explain the score briefly. Keep it factual and short.",
+    "Return plain text only. No markdown, no bullets, no placeholders, no fragments.",
+    "Do not include reasoning, analysis, or <think> tags.",
     "",
     `Repository: ${input.owner}/${input.repoName}`,
     `Health score: ${input.scorePercent}% (${input.label})`,
@@ -373,7 +392,7 @@ export async function getGroqRepoHealthSummary(input: {
     top_p: 1,
   });
 
-  const text = extractText(response);
+  const text = sanitizeAiText(extractText(response));
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
   const finalText = cleaned.replace(/^"|"$/g, "");
