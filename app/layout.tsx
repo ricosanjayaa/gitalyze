@@ -3,6 +3,7 @@ import "../src/index.css";
 import siteMetadataJson from "../metadata.json";
 import { Providers } from "@/components/Providers";
 import { getSiteUrl } from "@/lib/site-url";
+import Footer from "@/components/Footer";
 
 const metadataBase = new URL(getSiteUrl());
 
@@ -42,8 +43,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body>
-        <Providers>{children}</Providers>
+      <body className="min-h-[100dvh]">
+        <Providers>
+          <div className="min-h-[100dvh] min-w-[320px] flex flex-col">
+            <div className="flex-1">{children}</div>
+            <Footer />
+          </div>
+        </Providers>
       </body>
     </html>
   );

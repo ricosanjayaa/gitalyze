@@ -1,10 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { 
-  fetchGitHubUser, 
-  fetchUserRepos, 
-  type GitHubUser, 
-  type GitHubRepo
-} from '@/lib/github';
+import { type GitHubUser, type GitHubRepo } from "@/lib/github";
 import { calculateScoreV2, type ScoreBreakdown } from '@/lib/scoring';
 import { buildProfileSnapshot, type ProfileSnapshot } from "@/lib/profile-snapshot";
 import { generateRecommendationsV2, type Deficiency } from "@/lib/recommendation";
@@ -46,6 +41,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   const requestIdRef = useRef(0);
   const coreFetchInFlightRef = useRef(false);
   const recsFetchInFlightRef = useRef(false);
+  const recsRequestKeyRef = useRef<string | null>(null);
   const debugCounters = useRef({ core: 0, snapshotApplied: 0, deterministicRecs: 0, aiRecs: 0 });
 
   // Effect to reset state when username changes
@@ -67,6 +63,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
     hasAppliedInitial.current = false;
     coreFetchInFlightRef.current = false;
     recsFetchInFlightRef.current = false;
+    recsRequestKeyRef.current = null;
   }, [username]);
 
   useEffect(() => {
@@ -114,47 +111,30 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         setLoading(true);
       }
       try {
-        const [userData, reposData] = await Promise.all([
-          fetchGitHubUser(username),
-          fetchUserRepos(username),
-        ]);
+        // Option B: compute score once using the enhanced snapshot (events + repoExtras).
+        const snapshotData = await fetch(`/api/github/user/${encodeURIComponent(username)}/snapshot`)
+          .then((r) => (r.ok ? r.json() : null));
 
         if (ignore) return;
         if (requestId !== requestIdRef.current) return;
+        if (!snapshotData?.user || !snapshotData?.repos) {
+          throw new Error("Snapshot missing required fields");
+        }
 
-        setUser(userData);
-        setRepos(reposData);
+        setUser(snapshotData.user);
+        setRepos(snapshotData.repos);
         setLastUpdated(new Date());
 
-        const baseSnapshot = buildProfileSnapshot({ user: userData, repos: reposData, repoExtras: [] });
-        setSnapshot(baseSnapshot);
-        setScoreData(calculateScoreV2(baseSnapshot));
+        const enhanced = buildProfileSnapshot({
+          user: snapshotData.user,
+          repos: snapshotData.repos,
+          repoExtras: snapshotData.repoExtras ?? [],
+          events: snapshotData.events ?? [],
+        });
+        setSnapshot(enhanced);
+        setScoreData(calculateScoreV2(enhanced));
 
-        // Fetch enhanced snapshot (README/releases) in the background for better accuracy.
-        fetch(`/api/github/user/${encodeURIComponent(username)}/snapshot`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            if (!data || ignore) return;
-            if (requestId !== requestIdRef.current) return;
-            const enhanced = buildProfileSnapshot({
-              user: data.user,
-              repos: data.repos,
-              repoExtras: data.repoExtras ?? [],
-              events: data.events ?? [],
-            });
-            setSnapshot(enhanced);
-
-            const nextScore = calculateScoreV2(enhanced);
-            setScoreData((prev) => {
-              if (!prev) return nextScore;
-              const bigJump = Math.abs((nextScore.total ?? 0) - (prev.total ?? 0)) >= 2;
-              if (!bigJump) return prev;
-              return nextScore;
-            });
-
-            if (process.env.NODE_ENV !== "production") debugCounters.current.snapshotApplied += 1;
-          })
-          .catch(() => {});
+        if (process.env.NODE_ENV !== "production") debugCounters.current.snapshotApplied += 1;
       } catch (err) {
         if (!ignore) {
           console.error(err);
@@ -188,36 +168,44 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         return;
       }
 
-      const cacheKey = `recs_${user.login}`;
-      const cachedData = localStorage.getItem(cacheKey);
-      
-      // Always compute deterministic deficiencies (for "Why?") even if we use cached recs.
-      const activeSnapshot = snapshot ?? buildProfileSnapshot({ user, repos, repoExtras: [] });
-      const deterministic = generateRecommendationsV2(activeSnapshot);
-      setDeficiencies(deterministic.deficiencies);
-      if (process.env.NODE_ENV !== "production") debugCounters.current.deterministicRecs += 1;
-
-      if (cachedData && recRetryTrigger === 0) {
-        try {
-          const { recs, timestamp } = JSON.parse(cachedData);
-          const cacheAge = Date.now() - timestamp;
-          if (cacheAge < CLIENT_CACHE_TTL_MS) {
-            console.log('[CLIENT CACHE] Using cached recommendations for new profile');
-            setRecommendations(recs);
-            setLoadingRecs(false);
-            return;
-          }
-        } catch (e) {
-          // Invalid cache, continue to fetch
-        }
+      const requestKey = `${user.login}:${scoreData.total ?? 0}:${repos.length}:${recRetryTrigger}`;
+      if (recsRequestKeyRef.current === requestKey && recRetryTrigger === 0) {
+        return;
       }
-
-      hasFetchedRecs.current = true;
-      setRecError(null);
-      setIsRecRateLimited(false);
+      recsRequestKeyRef.current = requestKey;
 
       try {
+        // Mark in-flight as early as possible to avoid double runs when effects re-fire quickly.
         recsFetchInFlightRef.current = true;
+
+        const cacheKey = `recs_${user.login}`;
+        const cachedData = localStorage.getItem(cacheKey);
+
+        // Always compute deterministic deficiencies (for "Why?") even if we use cached recs.
+        const activeSnapshot = snapshot ?? buildProfileSnapshot({ user, repos, repoExtras: [] });
+        const deterministic = generateRecommendationsV2(activeSnapshot);
+        setDeficiencies(deterministic.deficiencies);
+        if (process.env.NODE_ENV !== "production") debugCounters.current.deterministicRecs += 1;
+
+        if (cachedData && recRetryTrigger === 0) {
+          try {
+            const { recs, timestamp } = JSON.parse(cachedData);
+            const cacheAge = Date.now() - timestamp;
+            if (cacheAge < CLIENT_CACHE_TTL_MS) {
+              console.log('[CLIENT CACHE] Using cached recommendations for new profile');
+              setRecommendations(recs);
+              setLoadingRecs(false);
+              return;
+            }
+          } catch (e) {
+            // Invalid cache, continue to fetch
+          }
+        }
+
+        hasFetchedRecs.current = true;
+        setRecError(null);
+        setIsRecRateLimited(false);
+
         // Send a minimal payload to avoid oversized requests: pick top 5 repos and only required user fields
         const minimalUser = {
           name: user.name,
@@ -309,8 +297,8 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
       } finally {
         if (!ignore) {
           setLoadingRecs(false);
-          recsFetchInFlightRef.current = false;
         }
+        recsFetchInFlightRef.current = false;
       }
     }
 

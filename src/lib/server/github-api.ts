@@ -48,6 +48,12 @@ export async function fetchRepoReleases(owner: string, repoName: string) {
   return cachedJsonFetch<any[]>(key, url);
 }
 
+export async function fetchRepoLanguages(owner: string, repoName: string) {
+  const key = `languages_${owner.toLowerCase()}_${repoName.toLowerCase()}`;
+  const url = `https://api.github.com/repos/${owner}/${repoName}/languages`;
+  return cachedJsonFetch<Record<string, number>>(key, url);
+}
+
 export async function fetchRepoDetail(owner: string, repoName: string) {
   const key = `repo_detail_${owner.toLowerCase()}_${repoName.toLowerCase()}`;
   const cached = cache.get<any>(key);
@@ -72,6 +78,65 @@ export async function fetchRepoDetail(owner: string, repoName: string) {
 
   cache.set(key, responseData, CACHE_TTL_MS);
   return responseData;
+}
+
+export async function fetchRepoCommits(options: {
+  owner: string;
+  repoName: string;
+  sinceIso: string;
+  pageLimit?: number;
+  perPage?: number;
+  maxCommits?: number;
+}) {
+  const { owner, repoName, sinceIso } = options;
+  const pageLimit = options.pageLimit ?? 3;
+  const perPage = options.perPage ?? 100;
+  const maxCommits = options.maxCommits ?? 300;
+
+  const key = `commits_${owner.toLowerCase()}_${repoName.toLowerCase()}_${sinceIso}_${pageLimit}_${perPage}_${maxCommits}`;
+  const cached = cache.get<any[]>(key);
+  if (cached) return cached;
+
+  const headers = buildGitHubHeaders();
+  const commits: any[] = [];
+  for (let page = 1; page <= pageLimit; page += 1) {
+    const url = new URL(`https://api.github.com/repos/${owner}/${repoName}/commits`);
+    url.searchParams.set("since", sinceIso);
+    url.searchParams.set("per_page", String(perPage));
+    url.searchParams.set("page", String(page));
+
+    const response = await fetch(url.toString(), { headers });
+    if (!response.ok) {
+      throw new Error(`GitHub API responded with ${response.status} for commits`);
+    }
+
+    const pageData = (await response.json()) as any[];
+    if (pageData.length === 0) break;
+
+    for (const item of pageData) {
+      commits.push({
+        sha: item.sha,
+        html_url: item.html_url,
+        author: item.author
+          ? {
+              login: item.author.login,
+              avatar_url: item.author.avatar_url,
+              html_url: item.author.html_url,
+            }
+          : null,
+        commit: {
+          author: { date: item.commit?.author?.date ?? null },
+        },
+      });
+      if (commits.length >= maxCommits) break;
+    }
+
+    if (commits.length >= maxCommits) break;
+    if (pageData.length < perPage) break;
+  }
+
+  cache.set(key, commits, CACHE_TTL_MS);
+  return commits;
 }
 
 export async function fetchRepoReadme(owner: string, repoName: string) {

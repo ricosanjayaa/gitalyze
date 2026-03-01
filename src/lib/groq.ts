@@ -20,6 +20,7 @@ const recommendationCache = new Map<string, { data: string[]; timestamp: number 
 const retrievalPromises = new Map<string, Promise<string[]>>();
 const cooldownMs = Number(process.env.GROQ_COOLDOWN_MS) || 60 * 1000;
 const cooldowns = new Map<string, number>();
+const repoSummaryCache = new Map<string, { data: string; timestamp: number }>();
 
 function getCachedRecommendations(username: string): string[] | null {
   const key = username.toLowerCase();
@@ -51,6 +52,18 @@ function setCooldown(username: string) {
   return until;
 }
 
+function getCachedRepoSummary(key: string): string | null {
+  const cached = repoSummaryCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedRepoSummary(key: string, data: string): void {
+  repoSummaryCache.set(key, { data, timestamp: Date.now() });
+}
+
 function getGroqConfig() {
   return {
     apiKey: process.env.GROQ_API_KEY,
@@ -78,7 +91,7 @@ function buildPrompt(user: GitHubUser, repos: GitHubRepo[], breakdown?: ScoreBre
   }).length;
 
   const system =
-    "You are a senior engineer mentoring a developer. Give 2-4 concise recommendations as a JSON array of strings. Start each with an action verb. If you are given a diagnosis and selected actions, only rewrite those and do not invent facts. If there are no meaningful recommendations, return [].";
+    "You are a senior engineer mentoring a developer. Give 2-4 concise recommendations as a JSON array of strings. Start each with an action verb. If you are given a diagnosis and selected actions, only rewrite those and do not invent facts. If there are no meaningful recommendations, return []. Do not include reasoning, analysis, or <think> tags.";
   const isProfileOnly = top?.name === user.login;
   const userMsg = `${user.login}: ${user.public_repos} repo, ${accountAge}yr, ${user.followers} followers, ${
     languages.slice(0, 3).join(",") || "-"
@@ -109,6 +122,72 @@ function extractText(body: any): string {
   if (Array.isArray(choice) && choice.length > 0 && typeof choice[0] === "string") return choice[0];
   if (typeof body?.text === "string") return body.text;
   return "";
+}
+
+function sanitizeAiText(input: string): string {
+  if (!input) return "";
+  return input
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^\s*(analysis|thinking):[\s\S]*?\n/gi, "")
+    .replace(/^\s*(analysis|thinking):/gi, "")
+    .trim();
+}
+
+function extractAfterDirective(text: string, directives: RegExp[]): string {
+  let result = text;
+  directives.forEach((pattern) => {
+    const matches = [...result.matchAll(pattern)];
+    if (matches.length > 0) {
+      const last = matches[matches.length - 1];
+      const index = (last.index ?? 0) + last[0].length;
+      result = result.slice(index).trim();
+    }
+  });
+  return result.trim();
+}
+
+function normalizeAiOutput(text: string, maxSentences: number, maxChars: number): string {
+  if (!text) return "";
+  let cleaned = text
+    .replace(/^["'“”]+/, "")
+    .replace(/["'“”]+$/g, "")
+    .trim();
+
+  cleaned = extractAfterDirective(cleaned, [
+    /\bWrite:\s*/gi,
+    /\bFinal answer:\s*/gi,
+    /\bFinal:\s*/gi,
+    /\bOutput:\s*/gi,
+    /\bAnswer:\s*/gi,
+  ]);
+
+  cleaned = cleaned.replace(/^\s*(we need to|first sentence|first,|second sentence|use reasons|keep factual|plain text|no markdown|no bullets|no placeholders|no fragments)[^a-z0-9]+/gi, "");
+  cleaned = cleaned.replace(/https?:\/\/\S+/gi, "");
+  cleaned = cleaned.replace(/\b[0-9a-fA-F]{32,}\b/g, "");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (sentences.length === 0) return cleaned.slice(0, maxChars).trim();
+  const limited = sentences.slice(0, maxSentences).join(" ").trim();
+  if (limited.length <= maxChars) return limited;
+  return limited.slice(0, maxChars).replace(/\s+\S*$/, "").trim();
+}
+
+function stripNoisyReadme(input: string): string {
+  if (!input) return "";
+  return input
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\b[0-9a-fA-F]{32,}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildHybridPrompt(input: {
@@ -193,7 +272,7 @@ export async function getGroqRecommendations(
         });
         const body = await response;
         console.log("[AI] Raw response:", JSON.stringify(body).slice(0, 500));
-        const text = extractText(body);
+        const text = normalizeAiOutput(sanitizeAiText(extractText(body)), 3, 400);
         console.log("[AI] Extracted text:", text.slice(0, 300));
 
         let arr: string[] | null = null;
@@ -281,6 +360,101 @@ export async function getGroqRecommendations(
   } finally {
     retrievalPromises.delete(cacheKey);
   }
+}
+
+export async function getGroqRepoSummary(input: {
+  owner: string;
+  repoName: string;
+  description: string;
+  readme: string;
+  topLanguages: string[];
+  stars: number;
+  forks: number;
+  openIssues: number;
+  lastPush: string;
+}): Promise<string> {
+  const cfg = getGroqConfig();
+  if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
+
+  const cacheKey = `${input.owner}/${input.repoName}`.toLowerCase();
+  const cached = getCachedRepoSummary(cacheKey);
+  if (cached) return cached;
+
+  const readmeSnippet = stripNoisyReadme(input.readme).slice(0, 800);
+  const prompt = [
+    "You are a technical writer. Write a concise 2-3 sentence summary of a GitHub repository.",
+    "Must include the repository name and description (if available).",
+    "Mention one concrete metric (stars, forks, open issues, or last push) and the primary language if provided.",
+    "Return plain text only. No markdown, no bullets, no placeholders, no fragments.",
+    "Do not include reasoning, analysis, or <think> tags.",
+    "",
+    `Repository: ${input.owner}/${input.repoName}`,
+    `Description: ${input.description || "(none)"}`,
+    `Top languages: ${input.topLanguages.slice(0, 3).join(", ") || "(unknown)"}`,
+    `Stars: ${input.stars} · Forks: ${input.forks} · Open issues: ${input.openIssues}`,
+    `Last push: ${input.lastPush || "(unknown)"}`,
+    "README excerpt:",
+    readmeSnippet || "(none)",
+  ].join("\n");
+
+  const groq = new Groq({ apiKey: cfg.apiKey });
+  const response = await groq.chat.completions.create({
+    messages: [{ role: "user", content: prompt }],
+    model: cfg.model,
+    temperature: 0.7,
+    max_completion_tokens: 300,
+    top_p: 1,
+  });
+
+  const text = normalizeAiOutput(sanitizeAiText(extractText(response)), 3, 380);
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
+  const finalText = cleaned.replace(/^"|"$/g, "");
+  setCachedRepoSummary(cacheKey, finalText);
+  return finalText;
+}
+
+export async function getGroqRepoHealthSummary(input: {
+  owner: string;
+  repoName: string;
+  scorePercent: number;
+  label: string;
+  reasons: string[];
+}): Promise<string> {
+  const cfg = getGroqConfig();
+  if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
+
+  const cacheKey = `health_${input.owner}/${input.repoName}`.toLowerCase();
+  const cached = getCachedRepoSummary(cacheKey);
+  if (cached) return cached;
+
+  const prompt = [
+    "You are a product analyst. Write a concise 1-2 sentence health summary for a GitHub repository.",
+    "The first sentence must include the score percent and label.",
+    "Use the reasons to explain the score briefly. Keep it factual and short.",
+    "Return plain text only. No markdown, no bullets, no placeholders, no fragments.",
+    "Do not include reasoning, analysis, or <think> tags.",
+    "",
+    `Repository: ${input.owner}/${input.repoName}`,
+    `Health score: ${input.scorePercent}% (${input.label})`,
+    `Reasons: ${input.reasons.join("; ") || "(none)"}`,
+  ].join("\n");
+
+  const groq = new Groq({ apiKey: cfg.apiKey });
+  const response = await groq.chat.completions.create({
+    messages: [{ role: "user", content: prompt }],
+    model: cfg.model,
+    temperature: 0.5,
+    max_completion_tokens: 200,
+    top_p: 1,
+  });
+
+  const text = normalizeAiOutput(sanitizeAiText(extractText(response)), 2, 260);
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
+  const finalText = cleaned.replace(/^"|"$/g, "");
+  setCachedRepoSummary(cacheKey, finalText);
+  return finalText;
 }
 
 export function getRemediationPlan(_breakdown: ScoreBreakdown, user: GitHubUser, repos: GitHubRepo[]): string[] {

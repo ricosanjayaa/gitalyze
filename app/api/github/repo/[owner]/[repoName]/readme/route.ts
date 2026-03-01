@@ -9,7 +9,7 @@ export async function GET(
   const { owner, repoName } = await context.params;
   try {
     const readme = await fetchRepoReadme(owner, repoName);
-    return NextResponse.json({ readme });
+    return NextResponse.json({ readme: readme ?? "" });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ message: "Failed to fetch README from GitHub" }, { status: 500 });
