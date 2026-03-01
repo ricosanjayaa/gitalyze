@@ -56,6 +56,7 @@ type RepoAnalytics = {
     pushed_at: string
     default_branch: string
     visibility: 'public' | 'private' | 'internal'
+    homepage: string | null
   }
   contributorsTop: Array<{
     login: string
@@ -96,6 +97,8 @@ export default function RepoDetail({
   const [actionsOpen, setActionsOpen] = useState(false)
   const summaryRequestRef = useRef<{ key: string | null; inFlight: boolean }>({ key: null, inFlight: false })
   const healthRequestRef = useRef<{ key: string | null; inFlight: boolean }>({ key: null, inFlight: false })
+  const summaryAttemptRef = useRef<string | null>(null)
+  const healthAttemptRef = useRef<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -211,6 +214,7 @@ export default function RepoDetail({
     if (!repo || readmeLoading) return
     const requestKey = `${repo.full_name}:${readmeText.length}:${languageRows.map(row => row.language).join(',')}:${repo.stargazers_count}:${repo.forks_count}:${repo.open_issues_count}:${repo.pushed_at}`
     if (summaryRequestRef.current.inFlight) return
+    if (summaryAttemptRef.current === requestKey) return
     if (summaryRequestRef.current.key === requestKey && summaryText) {
       setSummaryLoading(false)
       return
@@ -219,6 +223,7 @@ export default function RepoDetail({
     const run = async () => {
       try {
         summaryRequestRef.current = { key: requestKey, inFlight: true }
+        summaryAttemptRef.current = requestKey
         setSummaryLoading(true)
         setSummaryNote(null)
         const res = await fetch('/api/ai/repo-summary', {
@@ -259,6 +264,7 @@ export default function RepoDetail({
     if (!analytics || !repo) return
     const requestKey = `${repo.full_name}:${analytics.health.scorePercent}:${analytics.health.label}:${analytics.health.reasons.join('|')}`
     if (healthRequestRef.current.inFlight) return
+    if (healthAttemptRef.current === requestKey) return
     if (healthRequestRef.current.key === requestKey && healthSummary) {
       setHealthSummaryLoading(false)
       return
@@ -267,6 +273,7 @@ export default function RepoDetail({
     const run = async () => {
       try {
         healthRequestRef.current = { key: requestKey, inFlight: true }
+        healthAttemptRef.current = requestKey
         setHealthSummaryLoading(true)
         setHealthSummaryNote(null)
         const res = await fetch('/api/ai/repo-health-summary', {
@@ -373,7 +380,18 @@ export default function RepoDetail({
 
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight font-mono">{repo.name}</h1>
+                    {repo.homepage ? (
+                      <a
+                        href={normalizeHomepage(repo.homepage)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight font-mono hover:underline"
+                      >
+                        {repo.name}
+                      </a>
+                    ) : (
+                      <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight font-mono">{repo.name}</h1>
+                    )}
                     <span className="inline-flex items-center gap-1.5 text-[9px] px-1.5 py-0.5 rounded-full border border-border/40 bg-secondary/40 text-secondary-foreground">
                       <span
                         className={[
@@ -800,6 +818,13 @@ function formatBytes(bytes: number) {
     unitIndex += 1
   }
   return `${Math.round(value * 10) / 10} ${units[unitIndex]}`
+}
+
+function normalizeHomepage(homepage: string) {
+  const trimmed = homepage.trim()
+  if (!trimmed) return trimmed
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed}`
 }
 
 function computeTrend(series: Array<{ date: string; commits: number }>) {

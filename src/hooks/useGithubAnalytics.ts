@@ -19,6 +19,44 @@ interface InitialAnalyticsData {
   recommendations?: string[];
 }
 
+function normalizeRecommendations(raw: string[] | string): string[] {
+  const normalizeList = (list: string[]) =>
+    list
+      .map((s) => String(s).trim())
+      .map((s) => s.replace(/^[-•\d\.\)\s]+/, "").replace(/^"|"$/g, "").trim())
+      .filter(Boolean)
+      .flatMap((s) => {
+        if (s.length <= 200) return [s];
+        return s.split(/(?<=[.!?])\s+/).slice(0, 2).filter(Boolean);
+      })
+      .map((s) => (s.length > 200 ? s.slice(0, 200).replace(/\s+\S*$/, "").trim() : s))
+      .slice(0, 6);
+
+  if (Array.isArray(raw)) return normalizeList(raw);
+
+  const text = String(raw).trim();
+  if (!text) return [];
+
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return normalizeList(parsed as string[]);
+    } catch {
+      // fall through
+    }
+  }
+
+  if (text.includes('","')) {
+    const items = text
+      .replace(/^\[|\]$/g, "")
+      .split(/"\s*,\s*"/)
+      .map((s) => s.replace(/^"|"$/g, ""));
+    return normalizeList(items);
+  }
+
+  return normalizeList([text]);
+}
+
 export function useGithubAnalytics(username: string | undefined, initial?: InitialAnalyticsData) {
   const [user, setUser] = useState<GitHubUser | null>(initial?.user ?? null);
   const [repos, setRepos] = useState<GitHubRepo[]>(initial?.repos ?? []);
@@ -42,6 +80,8 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   const coreFetchInFlightRef = useRef(false);
   const recsFetchInFlightRef = useRef(false);
   const recsRequestKeyRef = useRef<string | null>(null);
+  const aiRequestKeyRef = useRef<string | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
   const debugCounters = useRef({ core: 0, snapshotApplied: 0, deterministicRecs: 0, aiRecs: 0 });
 
   // Effect to reset state when username changes
@@ -64,6 +104,9 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
     coreFetchInFlightRef.current = false;
     recsFetchInFlightRef.current = false;
     recsRequestKeyRef.current = null;
+    aiRequestKeyRef.current = null;
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
   }, [username]);
 
   useEffect(() => {
@@ -168,6 +211,8 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         return;
       }
 
+      let deterministicTexts: string[] = [];
+
       const requestKey = `${user.login}:${scoreData.total ?? 0}:${repos.length}:${recRetryTrigger}`;
       if (recsRequestKeyRef.current === requestKey && recRetryTrigger === 0) {
         return;
@@ -229,15 +274,26 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
             created_at: r.created_at,
           }));
 
-        // Use deterministic recommendations immediately (no spinner), then optionally refine with AI.
-        const deterministicTexts = deterministic.actions.map((a) => a.text);
-        setRecommendations(deterministicTexts);
-        setLoadingRecs(false);
+        // Prepare deterministic fallback, but keep loading while AI runs.
+        deterministicTexts = deterministic.actions.map((a) => a.text);
 
         if (deterministic.deficiencies.length === 0 || deterministic.actions.length === 0) {
+          setRecommendations(deterministicTexts);
+          setLoadingRecs(false);
           localStorage.setItem(cacheKey, JSON.stringify({ recs: deterministicTexts, timestamp: Date.now() }));
           return;
         }
+
+        setLoadingRecs(true);
+
+        const aiKey = `${user.login}:${scoreData.total ?? 0}:${repos.length}:${deterministic.deficiencies.length}:${deterministic.actions.length}:${recRetryTrigger}`;
+        if (aiRequestKeyRef.current === aiKey && recRetryTrigger === 0) {
+          return;
+        }
+        aiRequestKeyRef.current = aiKey;
+
+        aiAbortRef.current?.abort();
+        aiAbortRef.current = new AbortController();
 
         const response = await fetch('/api/ai/recommendations', {
           method: 'POST',
@@ -249,6 +305,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
             deficiencies: deterministic.deficiencies,
             actions: deterministic.actions,
           }),
+          signal: aiAbortRef.current.signal,
         });
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
@@ -277,12 +334,15 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         const data = await response.json();
         if (!ignore) {
           if (requestId !== requestIdRef.current) return;
-          const newRecs = data.recommendations || [];
-          setRecommendations(newRecs);
+          let newRecs = normalizeRecommendations(data.recommendations || []);
+          if (newRecs.length === 1 && newRecs[0].startsWith("[") && newRecs[0].endsWith("]")) {
+            newRecs = normalizeRecommendations(newRecs[0]);
+          }
+          setRecommendations(newRecs.length ? newRecs : deterministicTexts);
           if (process.env.NODE_ENV !== "production") debugCounters.current.aiRecs += 1;
           setRecRetryAfter(null);
           // Cache the recommendations
-          localStorage.setItem(cacheKey, JSON.stringify({ recs: newRecs, timestamp: Date.now() }));
+          localStorage.setItem(cacheKey, JSON.stringify({ recs: newRecs.length ? newRecs : deterministicTexts, timestamp: Date.now() }));
         }
       } catch (err: any) {
         console.error("Failed to get AI recommendations", err);
@@ -292,13 +352,14 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
           // if thrown error included a code, detect rate limit
           setIsRecRateLimited((err && (err.code === 'RATE_LIMIT' || (err.status === 429))) || false);
           if (err && err.details && typeof err.details.retryAfter === 'number') setRecRetryAfter(err.details.retryAfter);
-          setRecommendations([]);
+          setRecommendations(deterministicTexts);
         }
       } finally {
         if (!ignore) {
           setLoadingRecs(false);
         }
         recsFetchInFlightRef.current = false;
+        aiAbortRef.current = null;
       }
     }
 
@@ -306,6 +367,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
 
     return () => {
       ignore = true;
+      aiAbortRef.current?.abort();
     };
   }, [scoreData, user, repos, recRetryTrigger]);
 

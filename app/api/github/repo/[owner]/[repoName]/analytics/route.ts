@@ -19,6 +19,7 @@ type AnalyticsResponse = {
     pushed_at: string;
     default_branch: string;
     visibility: "public" | "private" | "internal";
+    homepage: string | null;
   };
   contributorsTop: Array<{
     login: string;
@@ -236,6 +237,7 @@ export async function GET(
       pushed_at: repoDetail.pushed_at,
       default_branch: repoDetail.default_branch ?? "main",
       visibility: repoDetail.visibility ?? (repoDetail.private ? "private" : "public"),
+      homepage: repoDetail.homepage ?? null,
     },
     contributorsTop,
     contributorsCount,
