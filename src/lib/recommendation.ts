@@ -1,337 +1,227 @@
-import { ScoreBreakdown } from './scoring';
-import { GitHubUser, GitHubRepo } from './github';
+import type { ProfileSnapshot } from "./profile-snapshot";
+import { ACTIONS, type RecommendationActionId } from "./recommendation-playbook";
+
+export interface Deficiency {
+  id:
+    | "NO_REAL_PROJECTS"
+    | "NO_README_TOP_REPOS"
+    | "NO_LICENSE"
+    | "INACTIVE"
+    | "NO_RELEASES"
+    | "LOW_DISCOVERABILITY"
+    | "SINGLE_LANGUAGE"
+    | "PROFILE_INCOMPLETE";
+  severity: 1 | 2 | 3;
+  evidence: Record<string, string | number | boolean | null>;
+  title: string;
+  summary: string;
+  evidenceText: string[];
+  recommendedActions: RecommendationActionId[];
+}
 
 export interface RecommendationItem {
-  id: string;
+  id: RecommendationActionId;
   text: string;
-  category: string;
   impact: number;
   effort: number;
-  targetDeficiencies?: string[];
+  why: string;
 }
 
-function getTopLanguage(repos: GitHubRepo[]): string | null {
-  const langs: Record<string, number> = {};
-  repos.forEach(r => {
-    if (r.language) langs[r.language] = (langs[r.language] || 0) + 1;
-  });
-  return Object.entries(langs).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+function repoKey(owner: string, name: string) {
+  return `${owner.toLowerCase()}/${name.toLowerCase()}`;
 }
 
-function getTopRepo(repos: GitHubRepo[], excludeName?: string): GitHubRepo | null {
-  const filtered = excludeName
-    ? repos.filter(r => r.name.toLowerCase() !== excludeName.toLowerCase())
-    : repos;
-  return [...filtered].sort((a, b) => b.stargazers_count - a.stargazers_count)[0] || null;
+export function diagnose(snapshot: ProfileSnapshot): Deficiency[] {
+  const { user, repos, activity, extrasByRepo } = snapshot;
+
+  const nonForkNonArchived = repos.filter((r) => !r.fork && !r.archived);
+  const realRepos = nonForkNonArchived.filter((r) => r.name.toLowerCase() !== user.login.toLowerCase());
+
+  const topRepos = [...nonForkNonArchived]
+    .sort((a, b) => (b.stargazers_count ?? 0) - (a.stargazers_count ?? 0))
+    .slice(0, 8);
+
+  const denom = Math.max(1, topRepos.length);
+  const readmeMissing = topRepos.filter((r) => {
+    const key = repoKey(user.login, r.name);
+    const extra = extrasByRepo[key];
+    return extra ? !extra.readmeExists : false;
+  }).length;
+
+  const noLicenseCount = topRepos.filter((r) => !r.license).length;
+  const noReleaseCount = topRepos.filter((r) => {
+    const key = repoKey(user.login, r.name);
+    const extra = extrasByRepo[key];
+    return extra ? !extra.hasRelease : false;
+  }).length;
+
+  const lowDiscoverability = topRepos.filter((r) => {
+    const hasDesc = Boolean(r.description && r.description.trim().length > 0);
+    const hasTopics = Array.isArray(r.topics) && r.topics.length > 0;
+    return !hasDesc || !hasTopics;
+  }).length;
+
+  const languages = new Set(realRepos.map((r) => r.language).filter(Boolean));
+  const deficiencies: Deficiency[] = [];
+
+  if (realRepos.length < 2) {
+    deficiencies.push({
+      id: "NO_REAL_PROJECTS",
+      severity: 3,
+      evidence: { realRepoCount: realRepos.length },
+      title: "Not enough real projects",
+      summary: "You don’t have enough non-fork projects to showcase your learning.",
+      evidenceText: [`Real (non-fork) repos: ${realRepos.length}`],
+      recommendedActions: ["CREATE_REAL_PROJECT"],
+    });
+  }
+
+  if (topRepos.length > 0 && readmeMissing / denom >= 0.5) {
+    deficiencies.push({
+      id: "NO_README_TOP_REPOS",
+      severity: readmeMissing / denom >= 0.8 ? 3 : 2,
+      evidence: { topRepos: denom, missingReadme: readmeMissing },
+      title: "Missing READMEs on top repos",
+      summary: "Most of your top repositories don’t explain what they do or how to run them.",
+      evidenceText: [
+        `Repos without a README: ${readmeMissing}/${denom}`,
+        `Repos with a README: ${denom - readmeMissing}/${denom}`,
+      ],
+      recommendedActions: ["ADD_README"],
+    });
+  }
+
+  if (topRepos.length > 0 && noLicenseCount / denom >= 0.6) {
+    deficiencies.push({
+      id: "NO_LICENSE",
+      severity: 2,
+      evidence: { topRepos: denom, missingLicense: noLicenseCount },
+      title: "Missing licenses",
+      summary: "A license signals professionalism and clarifies how others can use your work.",
+      evidenceText: [
+        `Repos without a license: ${noLicenseCount}/${denom}`,
+        `Repos with a license: ${denom - noLicenseCount}/${denom}`,
+      ],
+      recommendedActions: ["ADD_LICENSE"],
+    });
+  }
+
+  if (topRepos.length > 0 && noReleaseCount / denom >= 0.8) {
+    deficiencies.push({
+      id: "NO_RELEASES",
+      severity: 1,
+      evidence: { topRepos: denom, missingRelease: noReleaseCount },
+      title: "No releases yet",
+      summary: "Releases show you can ship versions and maintain a project over time.",
+      evidenceText: [
+        `Repos without a release: ${noReleaseCount}/${denom}`,
+        `Repos with a release: ${denom - noReleaseCount}/${denom}`,
+      ],
+      recommendedActions: ["CUT_A_RELEASE"],
+    });
+  }
+
+  if (topRepos.length > 0 && lowDiscoverability / denom >= 0.6) {
+    deficiencies.push({
+      id: "LOW_DISCOVERABILITY",
+      severity: 2,
+      evidence: { topRepos: denom, lowDiscoverability },
+      title: "Low discoverability",
+      summary: "Descriptions and topics help others quickly understand and find your repositories.",
+      evidenceText: [`Low discoverability: ${lowDiscoverability}/${denom} top repos need description/topics`],
+      recommendedActions: ["ADD_DESCRIPTION_TOPICS"],
+    });
+  }
+
+  if (activity.pushedLast90Days === 0) {
+    deficiencies.push({
+      id: "INACTIVE",
+      severity: 3,
+      evidence: { pushedLast90Days: activity.pushedLast90Days, lastPushAt: activity.lastPushAt },
+      title: "No recent activity",
+      summary: "There hasn’t been any repository activity recently, which makes progress look stalled.",
+      evidenceText: ["0 repos pushed in the last 90 days"],
+      recommendedActions: ["MAKE_RECENT_COMMIT"],
+    });
+  } else if (activity.pushedLast30Days === 0) {
+    deficiencies.push({
+      id: "INACTIVE",
+      severity: 2,
+      evidence: { pushedLast30Days: activity.pushedLast30Days, lastPushAt: activity.lastPushAt },
+      title: "No activity this month",
+      summary: "Recent activity helps show momentum and consistent learning.",
+      evidenceText: ["0 repos pushed in the last 30 days"],
+      recommendedActions: ["MAKE_RECENT_COMMIT"],
+    });
+  }
+
+  const completenessMissing = [!user.bio, !user.location, !user.blog, !user.name].filter(Boolean).length;
+  if (!user.bio) {
+    deficiencies.push({
+      id: "PROFILE_INCOMPLETE",
+      severity: 2,
+      evidence: { missingBio: true, missingCount: completenessMissing },
+      title: "Profile is incomplete",
+      summary: "A short bio and basic details make your profile easier to understand.",
+      evidenceText: ["Missing bio"],
+      recommendedActions: ["ADD_BIO", "ADD_PROFILE_DETAILS"],
+    });
+  } else if (completenessMissing >= 2) {
+    deficiencies.push({
+      id: "PROFILE_INCOMPLETE",
+      severity: 1,
+      evidence: { missingCount: completenessMissing },
+      title: "Profile could be more complete",
+      summary: "Filling out basic fields improves credibility and discoverability.",
+      evidenceText: [`Missing fields: ${completenessMissing}`],
+      recommendedActions: ["ADD_PROFILE_DETAILS"],
+    });
+  }
+
+  if (languages.size <= 1 && realRepos.length >= 2) {
+    deficiencies.push({
+      id: "SINGLE_LANGUAGE",
+      severity: 1,
+      evidence: { languageCount: languages.size },
+      title: "Low tech variety",
+      summary: "A small range of technologies can limit what you can demonstrate in a portfolio.",
+      evidenceText: [`Languages used: ${languages.size}`],
+      recommendedActions: ["CREATE_REAL_PROJECT"],
+    });
+  }
+
+  return deficiencies;
 }
 
-function getRecentRepos(repos: GitHubRepo[], days = 90): GitHubRepo[] {
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  return repos.filter(r => new Date(r.pushed_at).getTime() > cutoff);
-}
+export function generateRecommendationsV2(snapshot: ProfileSnapshot): {
+  deficiencies: Deficiency[];
+  actions: RecommendationItem[];
+} {
+  const deficiencies = diagnose(snapshot);
+  if (!deficiencies.length) return { deficiencies: [], actions: [] };
 
-function generateCompletenessRecommendation(user: GitHubUser, repos: GitHubRepo[]): RecommendationItem | null {
-  const missing: string[] = [];
-  if (!user.bio) missing.push('bio');
-  if (!user.location) missing.push('location');
-  if (!user.blog) missing.push('blog');
-  if (!user.email) missing.push('email');
-
-  if (missing.length === 0) return null;
-
-  const topLang = getTopLanguage(repos);
-
-  if (missing.includes('bio') && topLang) {
-    return {
-      id: 'completeness',
-      category: 'Completeness',
-      impact: 0.8,
-      effort: 0.1,
-      text: `Add a concise bio highlighting your ${topLang} expertise, and improve profile completeness`,
-      targetDeficiencies: ['completeness'],
-    };
+  const actionScores = new Map<RecommendationActionId, number>();
+  for (const deficiency of deficiencies) {
+    for (const actionId of deficiency.recommendedActions) {
+      const action = ACTIONS[actionId];
+      const score = (deficiency.severity * action.impact) / Math.max(0.05, action.effort);
+      actionScores.set(actionId, Math.max(actionScores.get(actionId) ?? 0, score));
+    }
   }
 
-  if (missing.includes('bio')) {
-    return {
-      id: 'completeness',
-      category: 'Completeness',
-      impact: 0.8,
-      effort: 0.1,
-      text: 'Add a concise bio to clarify your expertise and improve profile completeness',
-      targetDeficiencies: ['completeness'],
-    };
-  }
-
-  const missingText = missing.join(', ').replace(', ' + missing[missing.length - 1], ' and ');
-
-  return {
-    id: 'completeness',
-    category: 'Completeness',
-    impact: 0.8,
-    effort: 0.1,
-    text: `Add your ${missingText} to complete your profile and help others discover you`,
-    targetDeficiencies: ['completeness'],
-  };
-}
-
-function generateVolumeRecommendation(user: GitHubUser): RecommendationItem | null {
-  const count = user.public_repos || 0;
-
-  if (count <= 1) {
-    return {
-      id: 'volume',
-      category: 'Volume',
-      impact: 0.8,
-      effort: 0.5,
-      text: 'Quality over quantity, focus on creating repos you are proud to showcase',
-      targetDeficiencies: ['volume'],
-    };
-  }
-
-  return {
-    id: 'volume',
-    category: 'Volume',
-    impact: 0.6,
-    effort: 0.4,
-    text: 'A few well-documented repos tell a better story than many empty ones',
-    targetDeficiencies: ['volume'],
-  };
-}
-
-function generateQualityRecommendation(user: GitHubUser, repos: GitHubRepo[]): RecommendationItem | null {
-  const topRepo = getTopRepo(repos, user.login);
-  const nonUsernameRepos = repos.filter(r => r.name.toLowerCase() !== user.login.toLowerCase());
-  const hasDescription = repos.some(r => r.description);
-  const hasTopics = repos.some(r => r.topics && r.topics.length > 0);
-
-  if (nonUsernameRepos.length === 0) {
-    return {
-      id: 'quality',
-      category: 'Quality',
-      impact: 0.8,
-      effort: 0.5,
-      text: 'Create a new project repository with a detailed README to showcase your work',
-      targetDeficiencies: ['quality'],
-    };
-  }
-
-  if (topRepo && !topRepo.description) {
-    return {
-      id: 'quality',
-      category: 'Quality',
-      impact: 0.7,
-      effort: 0.3,
-      text: `Strengthen your ${topRepo.name} with a detailed README explaining features and usage`,
-      targetDeficiencies: ['quality'],
-    };
-  }
-
-  if (!hasDescription) {
-    return {
-      id: 'quality',
-      category: 'Quality',
-      impact: 0.7,
-      effort: 0.3,
-      text: 'Enhance repository descriptions to clearly communicate project purpose and value',
-      targetDeficiencies: ['quality'],
-    };
-  }
-
-  if (!hasTopics) {
-    return {
-      id: 'quality',
-      category: 'Quality',
-      impact: 0.6,
-      effort: 0.2,
-      text: 'Add relevant topics to your repos to improve discoverability',
-      targetDeficiencies: ['quality'],
-    };
-  }
-
-  return {
-    id: 'quality',
-    category: 'Quality',
-    impact: 0.6,
-    effort: 0.3,
-    text: 'A strong README is your project first impression, make it count',
-    targetDeficiencies: ['quality'],
-  };
-}
-
-function generateActivityRecommendation(user: GitHubUser, repos: GitHubRepo[]): RecommendationItem | null {
-  const recent = getRecentRepos(repos, 30);
-  const recent90 = getRecentRepos(repos, 90);
-  const topRepo = getTopRepo(repos, user.login);
-
-  if (recent90.length === 0) {
-    return {
-      id: 'activity',
-      category: 'Activity',
-      impact: 0.85,
-      effort: 0.6,
-      text: 'Improve contribution consistency to demonstrate sustained development activity',
-      targetDeficiencies: ['activity'],
-    };
-  }
-
-  if (recent.length === 0 && recent90.length > 0) {
-    if (topRepo) {
+  const ranked = [...actionScores.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([id]) => {
+      const action = ACTIONS[id];
       return {
-        id: 'activity',
-        category: 'Activity',
-        impact: 0.8,
-        effort: 0.4,
-        text: `Showcase recent work by updating your ${topRepo.name} project`,
-        targetDeficiencies: ['activity'],
+        id,
+        text: `${action.title}: ${action.steps[0]}`,
+        impact: action.impact,
+        effort: action.effort,
+        why: action.why,
       };
-    }
-    return {
-      id: 'activity',
-      category: 'Activity',
-      impact: 0.8,
-      effort: 0.4,
-      text: 'Showcase recent work by updating your pinned projects section',
-      targetDeficiencies: ['activity'],
-    };
-  }
+    });
 
-  return {
-    id: 'activity',
-    category: 'Activity',
-    impact: 0.7,
-    effort: 0.5,
-    text: 'Regular updates show you are actively maintaining your projects',
-    targetDeficiencies: ['activity'],
-  };
-}
-
-function generateDiversityRecommendation(repos: GitHubRepo[]): RecommendationItem | null {
-  const languages = new Set(repos.map(r => r.language).filter(Boolean));
-  const topLang = getTopLanguage(repos);
-
-  if (languages.size <= 1 && topLang) {
-    return {
-      id: 'diversity',
-      category: 'Diversity',
-      impact: 0.7,
-      effort: 0.4,
-      text: `Projects across different technologies alongside your ${topLang} expertise demonstrate versatility`,
-      targetDeficiencies: ['diversity'],
-    };
-  }
-
-  if (languages.size <= 1) {
-    return {
-      id: 'diversity',
-      category: 'Diversity',
-      impact: 0.7,
-      effort: 0.4,
-      text: 'Projects across different technologies demonstrate versatility',
-      targetDeficiencies: ['diversity'],
-    };
-  }
-
-  return {
-    id: 'diversity',
-    category: 'Diversity',
-    impact: 0.6,
-    effort: 0.3,
-    text: 'Showcasing range in your tech stack opens more opportunities',
-    targetDeficiencies: ['diversity'],
-  };
-}
-
-function generateMaturityRecommendation(user: GitHubUser, repos: GitHubRepo[]): RecommendationItem | null {
-  const hasLicense = repos.some(r => r.license);
-  const topRepo = getTopRepo(repos, user.login);
-
-  if (!hasLicense) {
-    if (topRepo) {
-      return {
-        id: 'maturity',
-        category: 'Maturity',
-        impact: 0.6,
-        effort: 0.2,
-        text: `Adding an open-source license to your ${topRepo.name} makes it more professional`,
-        targetDeficiencies: ['maturity'],
-      };
-    }
-    return {
-      id: 'maturity',
-      category: 'Maturity',
-      impact: 0.6,
-      effort: 0.2,
-      text: 'Adding an open-source license makes your projects more professional',
-      targetDeficiencies: ['maturity'],
-    };
-  }
-
-  return {
-    id: 'maturity',
-    category: 'Maturity',
-    impact: 0.5,
-    effort: 0.3,
-    text: 'Increase visibility by contributing to well-known open-source projects',
-    targetDeficiencies: ['maturity'],
-  };
-}
-
-export function generateRecommendations(
-  breakdown: ScoreBreakdown,
-  user: GitHubUser,
-  repos: GitHubRepo[]
-): RecommendationItem[] {
-  const maxima: Record<string, number> = {
-    activity: 25,
-    quality: 30,
-    volume: 15,
-    diversity: 10,
-    completeness: 10,
-    maturity: 10,
-  };
-
-  const deficits: string[] = Object.entries(maxima)
-    .filter(([k, max]) => {
-      const val = (breakdown as any)[k] ?? 0;
-      return val < max * 0.7;
-    })
-    .map(([k]) => k);
-
-  if (!deficits.length) {
-    return [];
-  }
-
-  const generators: Record<string, () => RecommendationItem | null> = {
-    completeness: () => generateCompletenessRecommendation(user, repos),
-    volume: () => generateVolumeRecommendation(user),
-    quality: () => generateQualityRecommendation(user, repos),
-    activity: () => generateActivityRecommendation(user, repos),
-    diversity: () => generateDiversityRecommendation(repos),
-    maturity: () => generateMaturityRecommendation(user, repos),
-  };
-
-  const deficitWeights: Record<string, number> = {};
-  deficits.forEach(d => {
-    const max = maxima[d];
-    const val = (breakdown as any)[d] ?? 0;
-    deficitWeights[d] = Math.max(0, 1 - val / max);
-  });
-
-  const items: RecommendationItem[] = [];
-  deficits.forEach(deficit => {
-    const generator = generators[deficit];
-    if (generator) {
-      const item = generator();
-      if (item) {
-        item.impact = item.impact * (deficitWeights[deficit] || 1);
-        items.push(item);
-      }
-    }
-  });
-
-  const topN = Math.max(2, Math.min(5, deficits.length));
-  return items
-    .sort((a, b) => b.impact - a.impact)
-    .slice(0, topN);
+  return { deficiencies, actions: ranked };
 }

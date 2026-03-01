@@ -5,7 +5,9 @@ import {
   type GitHubUser, 
   type GitHubRepo
 } from '@/lib/github';
-import { calculateScore, type ScoreBreakdown } from '@/lib/scoring';
+import { calculateScoreV2, type ScoreBreakdown } from '@/lib/scoring';
+import { buildProfileSnapshot, type ProfileSnapshot } from "@/lib/profile-snapshot";
+import { generateRecommendationsV2, type Deficiency } from "@/lib/recommendation";
 import { 
   format, 
   subMonths,
@@ -26,9 +28,12 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   const [user, setUser] = useState<GitHubUser | null>(initial?.user ?? null);
   const [repos, setRepos] = useState<GitHubRepo[]>(initial?.repos ?? []);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scoreData, setScoreData] = useState<ScoreBreakdown | null>(initial?.scoreData ?? null);
   const [recommendations, setRecommendations] = useState<string[]>(initial?.recommendations ?? []);
+  const [snapshot, setSnapshot] = useState<ProfileSnapshot | null>(null);
+  const [deficiencies, setDeficiencies] = useState<Deficiency[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [loadingRecs, setLoadingRecs] = useState(true);
   const [recError, setRecError] = useState<string | null>(null);
@@ -38,20 +43,30 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   const [recRetryTrigger, setRecRetryTrigger] = useState(0);
   const hasFetchedRecs = useRef(false);
   const hasAppliedInitial = useRef(false);
+  const requestIdRef = useRef(0);
+  const coreFetchInFlightRef = useRef(false);
+  const recsFetchInFlightRef = useRef(false);
+  const debugCounters = useRef({ core: 0, snapshotApplied: 0, deterministicRecs: 0, aiRecs: 0 });
 
   // Effect to reset state when username changes
   useEffect(() => {
+    requestIdRef.current += 1;
     setUser(null);
     setRepos([]);
     setScoreData(null);
     setRecommendations([]);
+    setSnapshot(null);
+    setDeficiencies([]);
     setLoading(true);
+    setIsRefreshing(false);
     setLoadingRecs(true);
     setRecError(null);
     setIsRecRateLimited(false);
     setError(null);
     hasFetchedRecs.current = false;
     hasAppliedInitial.current = false;
+    coreFetchInFlightRef.current = false;
+    recsFetchInFlightRef.current = false;
   }, [username]);
 
   useEffect(() => {
@@ -73,19 +88,31 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   // Effect for fetching core GitHub data
   useEffect(() => {
     let ignore = false;
+    const requestId = requestIdRef.current;
 
     async function loadCoreData() {
+      if (coreFetchInFlightRef.current) return;
       if (!username) {
         setLoading(false);
+        setIsRefreshing(false);
         return;
       }
 
       if (hasAppliedInitial.current && refetchTrigger === 0) {
         setLoading(false);
+        setIsRefreshing(false);
         return;
       }
 
-      setLoading(true);
+      coreFetchInFlightRef.current = true;
+      if (process.env.NODE_ENV !== "production") debugCounters.current.core += 1;
+
+      const hasExistingData = Boolean(user) && repos.length > 0 && Boolean(scoreData);
+      if (hasExistingData) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       try {
         const [userData, reposData] = await Promise.all([
           fetchGitHubUser(username),
@@ -93,13 +120,41 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         ]);
 
         if (ignore) return;
+        if (requestId !== requestIdRef.current) return;
 
         setUser(userData);
         setRepos(reposData);
         setLastUpdated(new Date());
 
-        const score = calculateScore(userData, reposData);
-        setScoreData(score);
+        const baseSnapshot = buildProfileSnapshot({ user: userData, repos: reposData, repoExtras: [] });
+        setSnapshot(baseSnapshot);
+        setScoreData(calculateScoreV2(baseSnapshot));
+
+        // Fetch enhanced snapshot (README/releases) in the background for better accuracy.
+        fetch(`/api/github/user/${encodeURIComponent(username)}/snapshot`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (!data || ignore) return;
+            if (requestId !== requestIdRef.current) return;
+            const enhanced = buildProfileSnapshot({
+              user: data.user,
+              repos: data.repos,
+              repoExtras: data.repoExtras ?? [],
+              events: data.events ?? [],
+            });
+            setSnapshot(enhanced);
+
+            const nextScore = calculateScoreV2(enhanced);
+            setScoreData((prev) => {
+              if (!prev) return nextScore;
+              const bigJump = Math.abs((nextScore.total ?? 0) - (prev.total ?? 0)) >= 2;
+              if (!bigJump) return prev;
+              return nextScore;
+            });
+
+            if (process.env.NODE_ENV !== "production") debugCounters.current.snapshotApplied += 1;
+          })
+          .catch(() => {});
       } catch (err) {
         if (!ignore) {
           console.error(err);
@@ -108,6 +163,8 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
       } finally {
         if (!ignore) {
           setLoading(false);
+          setIsRefreshing(false);
+          coreFetchInFlightRef.current = false;
         }
       }
     }
@@ -122,22 +179,25 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   // Effect for fetching AI recommendations
   useEffect(() => {
     let ignore = false;
+    const requestId = requestIdRef.current;
 
     async function loadRecs() {
+      if (recsFetchInFlightRef.current) return;
       if (!scoreData || !user || !repos.length || (hasFetchedRecs.current && recRetryTrigger === 0)) {
         if(scoreData && !repos.length) setLoadingRecs(false)
         return;
       }
 
-      // Check client-side cache only for DIFFERENT profiles (not page refresh)
       const cacheKey = `recs_${user.login}`;
-      const lastViewedUsername = localStorage.getItem('last_viewed_username');
       const cachedData = localStorage.getItem(cacheKey);
       
-      // Only use cache if this is a different profile (not a page refresh)
-      const isNewProfile = lastViewedUsername !== user.login;
-      
-      if (cachedData && recRetryTrigger === 0 && isNewProfile) {
+      // Always compute deterministic deficiencies (for "Why?") even if we use cached recs.
+      const activeSnapshot = snapshot ?? buildProfileSnapshot({ user, repos, repoExtras: [] });
+      const deterministic = generateRecommendationsV2(activeSnapshot);
+      setDeficiencies(deterministic.deficiencies);
+      if (process.env.NODE_ENV !== "production") debugCounters.current.deterministicRecs += 1;
+
+      if (cachedData && recRetryTrigger === 0) {
         try {
           const { recs, timestamp } = JSON.parse(cachedData);
           const cacheAge = Date.now() - timestamp;
@@ -145,7 +205,6 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
             console.log('[CLIENT CACHE] Using cached recommendations for new profile');
             setRecommendations(recs);
             setLoadingRecs(false);
-            localStorage.setItem('last_viewed_username', user.login);
             return;
           }
         } catch (e) {
@@ -153,15 +212,12 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         }
       }
 
-      // Update last viewed username
-      localStorage.setItem('last_viewed_username', user.login);
-
       hasFetchedRecs.current = true;
-      setLoadingRecs(true);
       setRecError(null);
       setIsRecRateLimited(false);
 
       try {
+        recsFetchInFlightRef.current = true;
         // Send a minimal payload to avoid oversized requests: pick top 5 repos and only required user fields
         const minimalUser = {
           name: user.name,
@@ -185,10 +241,26 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
             created_at: r.created_at,
           }));
 
+        // Use deterministic recommendations immediately (no spinner), then optionally refine with AI.
+        const deterministicTexts = deterministic.actions.map((a) => a.text);
+        setRecommendations(deterministicTexts);
+        setLoadingRecs(false);
+
+        if (deterministic.deficiencies.length === 0 || deterministic.actions.length === 0) {
+          localStorage.setItem(cacheKey, JSON.stringify({ recs: deterministicTexts, timestamp: Date.now() }));
+          return;
+        }
+
         const response = await fetch('/api/ai/recommendations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scoreData, user: minimalUser, repos: minimalRepos }),
+          body: JSON.stringify({
+            scoreData,
+            user: minimalUser,
+            repos: minimalRepos,
+            deficiencies: deterministic.deficiencies,
+            actions: deterministic.actions,
+          }),
         });
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
@@ -216,8 +288,10 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
 
         const data = await response.json();
         if (!ignore) {
+          if (requestId !== requestIdRef.current) return;
           const newRecs = data.recommendations || [];
           setRecommendations(newRecs);
+          if (process.env.NODE_ENV !== "production") debugCounters.current.aiRecs += 1;
           setRecRetryAfter(null);
           // Cache the recommendations
           localStorage.setItem(cacheKey, JSON.stringify({ recs: newRecs, timestamp: Date.now() }));
@@ -235,6 +309,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
       } finally {
         if (!ignore) {
           setLoadingRecs(false);
+          recsFetchInFlightRef.current = false;
         }
       }
     }
@@ -252,6 +327,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
 
   const refetch = async () => {
     if (!username) return;
+    requestIdRef.current += 1;
     await fetch(`/api/github/cache/clear/${username}`, { method: 'POST' });
     setRefetchTrigger(c => c + 1);
   };
@@ -302,9 +378,11 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
   return {
     user,
     loading,
+    isRefreshing,
     error,
     scoreData,
     recommendations,
+    deficiencies,
     lastUpdated,
     loadingRecs,
     recError,

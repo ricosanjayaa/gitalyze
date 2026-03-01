@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getGroqRecommendations, getRemediationPlan } from "@/lib/groq";
+import type { Deficiency, RecommendationItem } from "@/lib/recommendation";
 
 export async function POST(req: Request) {
   let body: any = null;
@@ -12,6 +13,8 @@ export async function POST(req: Request) {
   const scoreData = body?.scoreData;
   const user = body?.user;
   const repos = body?.repos;
+  const deficiencies = (body?.deficiencies ?? []) as Deficiency[];
+  const actions = (body?.actions ?? []) as RecommendationItem[];
 
   if (!scoreData || !user || !repos) {
     return NextResponse.json(
@@ -30,14 +33,18 @@ export async function POST(req: Request) {
     });
   }
 
+  if (Array.isArray(actions) && actions.length > 0 && !process.env.GROQ_API_KEY) {
+    return NextResponse.json({ recommendations: actions.map((a) => a.text), fallback: true, message: "AI disabled" });
+  }
+
   try {
     const MAXIMA: Record<string, number> = {
-      activity: 25,
-      quality: 30,
-      volume: 15,
-      diversity: 10,
+      activity: 20,
+      quality: 25,
+      depth: 15,
+      impact: 15,
+      consistency: 15,
       completeness: 10,
-      maturity: 10,
     };
 
     const hasWeakCategory = Object.entries(MAXIMA).some(([k, max]) => {
@@ -49,7 +56,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ recommendations: [] });
     }
 
-    const recommendations = await getGroqRecommendations(user, repos, scoreData);
+    const recommendations = await getGroqRecommendations(user, repos, scoreData, {
+      deficiencies: Array.isArray(deficiencies) ? deficiencies : [],
+      actions: Array.isArray(actions) ? actions : [],
+    });
 
     if (Array.isArray(recommendations) && recommendations.length === 0) {
       const fallbackPlan = getRemediationPlan(scoreData, user, repos);
@@ -92,4 +102,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ recommendations: [] });
   }
 }
-

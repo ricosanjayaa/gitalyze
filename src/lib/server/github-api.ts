@@ -36,6 +36,18 @@ export async function fetchUserRepos(username: string) {
   return cachedJsonFetch<any[]>(key, url);
 }
 
+export async function fetchUserEvents(username: string) {
+  const key = `events_${username.toLowerCase()}`;
+  const url = `https://api.github.com/users/${username}/events/public?per_page=30`;
+  return cachedJsonFetch<any[]>(key, url);
+}
+
+export async function fetchRepoReleases(owner: string, repoName: string) {
+  const key = `releases_${owner.toLowerCase()}_${repoName.toLowerCase()}`;
+  const url = `https://api.github.com/repos/${owner}/${repoName}/releases?per_page=1`;
+  return cachedJsonFetch<any[]>(key, url);
+}
+
 export async function fetchRepoDetail(owner: string, repoName: string) {
   const key = `repo_detail_${owner.toLowerCase()}_${repoName.toLowerCase()}`;
   const cached = cache.get<any>(key);
@@ -89,7 +101,7 @@ export async function fetchRepoReadme(owner: string, repoName: string) {
 export function clearUserCache(username: string) {
   const userKey = `user_${username.toLowerCase()}`;
   const reposKey = `repos_${username.toLowerCase()}`;
-  cache.deleteMany([userKey, reposKey]);
-  return 2;
+  const eventsKey = `events_${username.toLowerCase()}`;
+  cache.deleteMany([userKey, reposKey, eventsKey]);
+  return 3;
 }
-

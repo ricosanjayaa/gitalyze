@@ -1,17 +1,18 @@
 import { Groq } from "groq-sdk";
 import { ScoreBreakdown } from "./scoring";
 import { GitHubUser, GitHubRepo } from "./github";
-import { generateRecommendations } from "./recommendation";
+import { buildProfileSnapshot, type ProfileSnapshot } from "./profile-snapshot";
+import { generateRecommendationsV2, type Deficiency, type RecommendationItem } from "./recommendation";
 
 export type { ScoreBreakdown, GitHubUser, GitHubRepo };
 
 const SCORE_MAXIMA = {
-  activity: 25,
-  quality: 30,
-  volume: 15,
-  diversity: 10,
+  activity: 20,
+  quality: 25,
+  depth: 15,
+  impact: 15,
+  consistency: 15,
   completeness: 10,
-  maturity: 10,
 } as const;
 
 const CACHE_TTL_MS = Number(process.env.RECOMMENDATION_CACHE_TTL_MS) || 15 * 60 * 1000;
@@ -77,7 +78,7 @@ function buildPrompt(user: GitHubUser, repos: GitHubRepo[], breakdown?: ScoreBre
   }).length;
 
   const system =
-    "You are a senior engineer mentoring developers on GitHub portfolios. Give 2-4 unique recommendations as a JSON array of strings. Start each with an action verb. If the user has only a profile README (Top: profile-only), recommend creating REAL project repositories, NOT improving the README. If ANY category score is below 70% of its max, return 2-4 actionable items; otherwise return [].";
+    "You are a senior engineer mentoring a developer. Give 2-4 concise recommendations as a JSON array of strings. Start each with an action verb. If you are given a diagnosis and selected actions, only rewrite those and do not invent facts. If there are no meaningful recommendations, return [].";
   const isProfileOnly = top?.name === user.login;
   const userMsg = `${user.login}: ${user.public_repos} repo, ${accountAge}yr, ${user.followers} followers, ${
     languages.slice(0, 3).join(",") || "-"
@@ -110,10 +111,44 @@ function extractText(body: any): string {
   return "";
 }
 
+function buildHybridPrompt(input: {
+  snapshot: ProfileSnapshot;
+  breakdown: ScoreBreakdown;
+  deficiencies: Deficiency[];
+  actions: RecommendationItem[];
+}) {
+  const { snapshot, breakdown, deficiencies, actions } = input;
+  const base = buildPrompt(snapshot.user, snapshot.repos, breakdown);
+
+  const deficiencyLines = deficiencies.slice(0, 5).map((d) => {
+    const evidence = Object.entries(d.evidence)
+      .map(([k, v]) => `${k}=${String(v)}`)
+      .join(", ");
+    return `- ${d.id} (severity ${d.severity}): ${evidence}`;
+  });
+
+  const actionLines = actions.slice(0, 5).map((a) => `- ${a.id}: ${a.why}`);
+
+  return [
+    base,
+    "",
+    "Diagnosis (do not change facts):",
+    ...deficiencyLines,
+    "",
+    "Selected actions (rewrite into final recommendations):",
+    ...actionLines,
+    "",
+    "Rules:",
+    "- Use only the diagnosis + selected actions above.",
+    "- Do not add new facts or claims.",
+  ].join("\n");
+}
+
 export async function getGroqRecommendations(
   user: GitHubUser,
   repos: GitHubRepo[],
-  scoreData?: ScoreBreakdown
+  scoreData?: ScoreBreakdown,
+  context?: { deficiencies: Deficiency[]; actions: RecommendationItem[] }
 ): Promise<string[]> {
   const cfg = getGroqConfig();
   if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
@@ -133,7 +168,15 @@ export async function getGroqRecommendations(
       throw { code: "RATE_LIMIT", message: "AI rate limit cooldown active", status: 429, details: { retryAfter } };
     }
 
-    const prompt = buildPrompt(user, repos, scoreData);
+    const prompt =
+      context && scoreData
+        ? buildHybridPrompt({
+            snapshot: buildProfileSnapshot({ user, repos, repoExtras: [] }),
+            breakdown: scoreData,
+            deficiencies: context.deficiencies,
+            actions: context.actions,
+          })
+        : buildPrompt(user, repos, scoreData);
     const groq = new Groq({ apiKey: cfg.apiKey });
     const maxAttempts = cfg.maxRetries + 1;
     let lastErr: any = null;
@@ -197,7 +240,7 @@ export async function getGroqRecommendations(
         const normalized = arr
           .map((s) => s.replace(/^[-•\d\.\)\s]+/, "").trim())
           .filter(Boolean)
-          .slice(0, 4);
+          .slice(0, 6);
         console.log("[AI] Final parsed recommendations:", normalized);
         setCachedRecommendations(user.login, normalized);
         return normalized;
@@ -240,7 +283,8 @@ export async function getGroqRecommendations(
   }
 }
 
-export function getRemediationPlan(breakdown: ScoreBreakdown, user: GitHubUser, repos: GitHubRepo[]): string[] {
-  const plan = generateRecommendations(breakdown, user, repos);
-  return plan.map((p) => p.text);
+export function getRemediationPlan(_breakdown: ScoreBreakdown, user: GitHubUser, repos: GitHubRepo[]): string[] {
+  const snapshot = buildProfileSnapshot({ user, repos, repoExtras: [] });
+  const { actions } = generateRecommendationsV2(snapshot);
+  return actions.map((p) => p.text);
 }

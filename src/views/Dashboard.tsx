@@ -52,6 +52,15 @@ import {
 import type { GitHubRepo, GitHubUser } from "@/lib/github";
 import type { ScoreBreakdown } from "@/lib/scoring";
 
+const SCORE_MAXIMA: Record<string, number> = {
+  activity: 20,
+  quality: 25,
+  depth: 15,
+  impact: 15,
+  consistency: 15,
+  completeness: 10,
+};
+
 const KpiCard = ({ title, value, grade, total }: { title: string; value: number; grade?: string; total?: number }) => {
   const gradeColor = grade?.startsWith('A') ? 'text-emerald-500' : 
                      grade?.startsWith('B') ? 'text-blue-500' : 
@@ -98,8 +107,10 @@ export default function Dashboard({
     error,
     scoreData,
     recommendations,
+    deficiencies,
     lastUpdated,
     loadingRecs,
+    isRefreshing,
     recError,
     isRecRateLimited,
     recRetryAfter,
@@ -138,16 +149,7 @@ export default function Dashboard({
   const hasDeficits = useMemo(() => {
     if (!scoreData) return false;
 
-    const MAXIMA: Record<string, number> = {
-      activity: 25,
-      quality: 30,
-      volume: 15,
-      diversity: 10,
-      completeness: 10,
-      maturity: 10,
-    };
-
-    return Object.entries(MAXIMA).some(([k, max]) => {
+    return Object.entries(SCORE_MAXIMA).some(([k, max]) => {
       const val = (scoreData as any)[k] ?? 0;
       return val < max * 0.7;
     });
@@ -168,7 +170,7 @@ export default function Dashboard({
     };
   }, [theme]);
 
-  if (loading) {
+  if (loading && !user) {
     return <DashboardSkeleton />;
   }
 
@@ -245,7 +247,10 @@ export default function Dashboard({
             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono uppercase tracking-wider tabular-nums">
               <span className="font-sans hidden sm:inline">Last updated </span>
               <span className="font-mono tabular-nums">{format(lastUpdated, "HH:mm")}</span>
-              <RefreshCw className="w-3 h-3 opacity-50 cursor-pointer hover:opacity-100 transition-opacity" onClick={refetch} />
+              <RefreshCw
+                className={`w-3 h-3 opacity-50 cursor-pointer hover:opacity-100 transition-opacity ${isRefreshing ? "animate-spin" : ""}`}
+                onClick={refetch}
+              />
             </div>
             <ModeToggle className="h-8 w-8" />
           </div>
@@ -426,19 +431,19 @@ export default function Dashboard({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           
           {/* Performance Evaluation - Colored Bars */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg h-auto min-h-[320px] flex flex-col">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg h-[320px] flex flex-col">
             <CardHeader className="px-5 py-3 border-b border-border/30">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Performance</CardTitle>
             </CardHeader>
-            <CardContent className="p-4 space-y-3 flex-1 flex flex-col justify-center">
+            <CardContent className="p-4 space-y-3 flex-1 min-h-0 overflow-y-auto flex flex-col justify-center">
               {scoreData && (
                 [ 
-                  { key: 'activity', max: 25, tip: 'Based on recent repository updates and contribution consistency.' },
-                  { key: 'quality', max: 30, tip: 'Calculated from star/fork count and overall repository health.' },
-                  { key: 'volume', max: 15, tip: 'Reflects the total number of public repositories.' },
-                  { key: 'diversity', max: 10, tip: 'Measures the variety of programming languages used.' },
-                  { key: 'completeness', max: 10, tip: 'Indicates how thoroughly your profile is filled out.' },
-                  { key: 'maturity', max: 10, tip: 'Based on the age of your GitHub account.' },
+                  { key: 'activity', max: 20, tip: 'Recent pushes and recency of work.' },
+                  { key: 'quality', max: 25, tip: 'README, topics, license, and release signals on top repos.' },
+                  { key: 'depth', max: 15, tip: 'How many real (non-fork, non-archived) projects you have.' },
+                  { key: 'impact', max: 15, tip: 'Log-scaled stars and forks (capped to avoid bias).' },
+                  { key: 'consistency', max: 15, tip: 'How consistently repos have been updated over time.' },
+                  { key: 'completeness', max: 10, tip: 'Profile completeness (bio, name, links, etc.).' },
                 ].map(({ key, max }) => {
                   const value = scoreData[key as keyof typeof scoreData];
                   if (typeof value !== 'number') return null;
@@ -471,11 +476,63 @@ export default function Dashboard({
           </Card>
 
           {/* Recommendations - Bullet List */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg h-auto min-h-[320px] flex flex-col">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg h-[320px] flex flex-col">
             <CardHeader className="px-5 py-3 border-b border-border/30">
-              <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Recommendations</CardTitle>
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
+                  Recommendations
+                </CardTitle>
+                {Array.isArray(deficiencies) && deficiencies.length > 0 && (
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger asChild>
+                        <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest cursor-default">
+                          Why?
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="left"
+                        align="end"
+                        className="bg-popover border-border text-popover-foreground shadow-md rounded-lg p-3 max-w-[320px]"
+                      >
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold font-sans">Top signals detected</p>
+                          <ul className="space-y-3 text-[11px] text-muted-foreground font-sans">
+                            {deficiencies
+                              .slice()
+                              .sort((a: any, b: any) => (b?.severity ?? 0) - (a?.severity ?? 0))
+                              .slice(0, 3)
+                              .map((d: any) => (
+                                <li key={d.id} className="leading-tight space-y-0.5 pb-2 border-b border-border/40 last:border-b-0">
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <span className="text-[11px] text-foreground font-sans">{d.title ?? d.id}</span>
+                                    <span className="text-[10px] text-muted-foreground font-mono">sev {d.severity}</span>
+                                  </div>
+                                  {d.summary && <p className="text-[11px] text-muted-foreground font-sans">{d.summary}</p>}
+                                  {Array.isArray(d.evidenceText) && d.evidenceText.length > 0 && (
+                                    <ul className="mt-1 space-y-0.5">
+                                      {d.evidenceText.slice(0, 3).map((t: string, idx: number) => (
+                                        <li key={idx} className="text-[11px] text-muted-foreground font-sans">
+                                          - {t}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </li>
+                              ))}
+                          </ul>
+                          <p className="pt-1 text-[10px] text-muted-foreground/80 font-sans leading-snug">
+                            Disclaimer: This uses public GitHub data (repos + public events). Private contributions may not be counted.
+                            Counts can differ from GitHub’s contributions graph.
+                          </p>
+                        </div>
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                )}
+              </div>
             </CardHeader>
-            <CardContent className="p-4 flex-1 overflow-y-auto flex flex-col">
+            <CardContent className="p-4 flex-1 min-h-0 overflow-y-auto flex flex-col">
               {loadingRecs ? (
                 <div className="flex-1 flex items-center justify-center min-h-[200px]">
                   <div className="flex flex-col items-center gap-2">
@@ -567,7 +624,7 @@ export default function Dashboard({
           </Card>
 
           {/* Repo Growth (Quarterly Deltas - Full Area Chart) */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col h-auto min-h-[320px]">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col h-[320px]">
             <CardHeader className="px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between space-y-0">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Growth</CardTitle>
               <div className="flex items-center gap-1.5">
