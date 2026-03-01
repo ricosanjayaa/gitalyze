@@ -52,15 +52,6 @@ import {
 import type { GitHubRepo, GitHubUser } from "@/lib/github";
 import type { ScoreBreakdown } from "@/lib/scoring";
 
-const SCORE_MAXIMA: Record<string, number> = {
-  activity: 20,
-  quality: 25,
-  depth: 15,
-  impact: 15,
-  consistency: 15,
-  completeness: 10,
-};
-
 const KpiCard = ({ title, value, grade, total }: { title: string; value: number; grade?: string; total?: number }) => {
   const gradeColor = grade?.startsWith('A') ? 'text-emerald-500' : 
                      grade?.startsWith('B') ? 'text-blue-500' : 
@@ -146,15 +137,6 @@ export default function Dashboard({
   // Defensive: ensure recommendations is always a list before rendering
   const safeRecommendations = useMemo(() => Array.isArray(recommendations) ? recommendations : [], [recommendations]);
 
-  const hasDeficits = useMemo(() => {
-    if (!scoreData) return false;
-
-    return Object.entries(SCORE_MAXIMA).some(([k, max]) => {
-      const val = (scoreData as any)[k] ?? 0;
-      return val < max * 0.7;
-    });
-  }, [scoreData]);
-
   const chartColors = useMemo(() => {
     const isDark = theme === 'dark';
     return {
@@ -201,7 +183,7 @@ export default function Dashboard({
         <div className="max-w-[1200px] mx-auto p-4 md:p-6 space-y-3 flex-1 w-full">
         
         {/* --- Header --- */}
-        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 py-2 mb-3">
+        <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 py-2 mb-3">
           <div className="flex items-center gap-3 w-full sm:w-auto">
             <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary shrink-0" onClick={() => router.push("/")}>
               <ArrowLeft className="w-4 h-4" />
@@ -243,7 +225,7 @@ export default function Dashboard({
             </TooltipProvider>
 
           </div>
-          <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
+          <div className="flex items-center gap-2 sm:gap-4 w-full md:w-auto justify-between md:justify-end">
             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono uppercase tracking-wider tabular-nums">
               <span className="font-sans hidden sm:inline">Last updated </span>
               <span className="font-mono tabular-nums">{format(lastUpdated, "HH:mm")}</span>
@@ -257,7 +239,7 @@ export default function Dashboard({
         </header>
 
         {/* --- Hero KPIs --- */}
-        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3 items-stretch">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 items-stretch">
           {loading ? (
             [...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)
           ) : (
@@ -272,15 +254,15 @@ export default function Dashboard({
         </div>
 
         {/* --- Middle Section: Top Repos & Languages --- */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 min-h-[400px]">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           
           {/* Top Repositories */}
-          <Card className="lg:col-span-2 bg-card border-border/30 shadow-sm rounded-lg flex flex-col h-full max-h-[400px]">
-            <CardHeader className="px-5 py-3 border-b border-border/30 shrink-0">
+          <Card className="lg:col-span-2 bg-card border-border/30 shadow-sm rounded-lg flex flex-col h-full">
+            <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30 shrink-0">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Top repositories</CardTitle>
             </CardHeader>
             <CardContent className="p-0 flex flex-col h-full overflow-hidden items-stretch">
-              <div className="divide-y divide-border/30 overflow-y-auto flex-1 custom-scrollbar flex flex-col min-h-0">
+              <div className="divide-y divide-border/30 overflow-y-auto flex-1 custom-scrollbar flex flex-col min-h-0 md:max-h-[340px]">
                 {loading && topRepos.length === 0 && (
                   <div className="p-6 space-y-3">
                     {[...Array(5)].map((_, i) => (
@@ -362,18 +344,18 @@ export default function Dashboard({
           </Card>
 
           {/* Languages - Monotone Rounded Donut Chart */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col min-h-[300px] max-h-[400px] h-full">
-            <CardHeader className="px-5 py-3 border-b border-border/30">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col min-h-[260px] h-full">
+            <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Languages</CardTitle>
             </CardHeader>
-            <CardContent className="p-4 grid grid-rows-[auto_auto] gap-4 h-full overflow-hidden">
+            <CardContent className="p-3 sm:p-4 grid grid-rows-[auto_auto] gap-4 h-full overflow-hidden">
               {loading && languageData.length === 0 ? (
                 <div className="row-span-2 flex items-center justify-center text-center text-xs text-muted-foreground py-8 font-sans">
                   <Skeleton className="h-32 w-32 rounded-full" />
                 </div>
               ) : languageData.length > 0 ? (
                 <>
-                  <div className="relative h-[180px] sm:h-[200px] md:h-[220px]">
+                  <div className="relative h-[170px] sm:h-[200px] md:h-[220px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
@@ -445,14 +427,14 @@ export default function Dashboard({
         </div>
 
         {/* --- Bottom Section: Performance, Recs, Growth --- */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           
           {/* Performance Evaluation - Colored Bars */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg h-[320px] flex flex-col">
-            <CardHeader className="px-5 py-3 border-b border-border/30">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col">
+            <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">Performance</CardTitle>
             </CardHeader>
-            <CardContent className="p-4 space-y-3 flex-1 min-h-0 overflow-y-auto flex flex-col justify-center">
+            <CardContent className="p-3 sm:p-4 space-y-3 flex-1 min-h-0 overflow-y-auto flex flex-col justify-center">
               {loading && !scoreData && (
                 <div className="space-y-3">
                   {[...Array(4)].map((_, i) => (
@@ -503,8 +485,8 @@ export default function Dashboard({
           </Card>
 
           {/* Recommendations - Bullet List */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg h-[320px] flex flex-col">
-            <CardHeader className="px-5 py-3 border-b border-border/30">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col">
+            <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30">
               <div className="flex items-center justify-between gap-3">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
                   Recommendations
@@ -559,7 +541,7 @@ export default function Dashboard({
                 )}
               </div>
             </CardHeader>
-            <CardContent className="p-4 flex-1 min-h-0 overflow-y-auto flex flex-col">
+            <CardContent className="p-3 sm:p-4 flex-1 min-h-0 overflow-y-auto flex flex-col">
               {loadingRecs ? (
                 <div className="flex-1 flex items-center justify-center min-h-[200px]">
                   <div className="flex flex-col items-center gap-2">
@@ -624,17 +606,9 @@ export default function Dashboard({
                     </motion.ul>
 	                  ) : (
 	                    <div className="flex-1 flex items-center justify-center min-h-[200px]">
-                      {hasDeficits ? (
-                        <div className="flex flex-col items-center justify-center gap-2 min-h-[200px] text-center px-4">
-                          <p className="text-[11px] text-muted-foreground font-sans">
-                            No AI recommendations returned. You may already be in good shape.
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-muted-foreground font-sans text-center px-4">
-                          No recommendations needed, keep it up!
-                        </p>
-	                      )}
+                      <p className="text-[11px] text-muted-foreground font-sans text-center px-4">
+                        No recommendations needed, keep it up!
+                      </p>
 	                    </div>
 	                  )}
 	                </>
@@ -643,8 +617,8 @@ export default function Dashboard({
           </Card>
 
           {/* Repo Growth (Quarterly Deltas - Full Area Chart) */}
-          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col h-[320px]">
-            <CardHeader className="px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between space-y-0 min-w-0">
+          <Card className="bg-card border-border/30 shadow-sm rounded-lg flex flex-col">
+            <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between space-y-0 min-w-0">
               <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans shrink-0">Growth</CardTitle>
               <div className="flex items-center gap-1.5 whitespace-nowrap">
                 <span className={`text-[10px] font-mono font-bold flex items-center gap-1 tabular-nums ${
@@ -676,7 +650,7 @@ export default function Dashboard({
                 <span className="text-[10px] font-mono text-muted-foreground tabular-nums">(Total {user.public_repos})</span>
               </div>
             </CardHeader>
-            <CardContent className="p-4 flex-1 min-h-0 flex flex-col">
+            <CardContent className="p-3 sm:p-4 flex-1 min-h-0 flex flex-col">
               {loading && growthData.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center">
                   <Skeleton className="h-40 w-full rounded-lg" />
@@ -686,7 +660,7 @@ export default function Dashboard({
                   No growth data available.
                 </div>
               ) : (
-                <div className="relative flex-grow w-full min-h-0">
+                <div className="relative w-full h-[180px] sm:h-[220px] md:h-[240px]">
                   <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-card to-transparent" />
                   <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-card to-transparent" />
                   <ResponsiveContainer width="100%" height="100%">
@@ -750,9 +724,9 @@ export default function Dashboard({
           </Card>
 
         </div>
-        <div className="py-12 bg-background/50">
-          <div className="max-w-xl mx-auto px-4">
-            <h3 className="text-center text-lg font-semibold mb-4 font-sans">Analyze another profile</h3>
+        <div className="py-10 sm:py-12 bg-background/50">
+          <div className="max-w-xl mx-auto px-4 sm:px-6">
+            <h3 className="text-center text-xl sm:text-lg font-semibold mb-5 sm:mb-4 font-sans">Analyze another profile</h3>
             <SearchInput />
           </div>
         </div>

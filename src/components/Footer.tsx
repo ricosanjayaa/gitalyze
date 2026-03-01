@@ -2,8 +2,8 @@ import React from "react";
 
 export default function Footer() {
   return (
-    <footer className="py-6 bg-background/50 backdrop-blur-sm">
-      <div className="max-w-[1200px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] text-muted-foreground font-mono">
+    <footer className="mt-auto py-6 bg-background/70 backdrop-blur-sm pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+      <div className="max-w-[1200px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-1 text-[10px] text-muted-foreground/90 font-mono">
         <span className="font-sans">
           Copyright © {new Date().getFullYear()} {" "}
           <a

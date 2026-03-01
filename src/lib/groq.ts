@@ -133,6 +133,63 @@ function sanitizeAiText(input: string): string {
     .trim();
 }
 
+function extractAfterDirective(text: string, directives: RegExp[]): string {
+  let result = text;
+  directives.forEach((pattern) => {
+    const matches = [...result.matchAll(pattern)];
+    if (matches.length > 0) {
+      const last = matches[matches.length - 1];
+      const index = (last.index ?? 0) + last[0].length;
+      result = result.slice(index).trim();
+    }
+  });
+  return result.trim();
+}
+
+function normalizeAiOutput(text: string, maxSentences: number, maxChars: number): string {
+  if (!text) return "";
+  let cleaned = text
+    .replace(/^["'“”]+/, "")
+    .replace(/["'“”]+$/g, "")
+    .trim();
+
+  cleaned = extractAfterDirective(cleaned, [
+    /\bWrite:\s*/gi,
+    /\bFinal answer:\s*/gi,
+    /\bFinal:\s*/gi,
+    /\bOutput:\s*/gi,
+    /\bAnswer:\s*/gi,
+  ]);
+
+  cleaned = cleaned.replace(/^\s*(we need to|first sentence|first,|second sentence|use reasons|keep factual|plain text|no markdown|no bullets|no placeholders|no fragments)[^a-z0-9]+/gi, "");
+  cleaned = cleaned.replace(/https?:\/\/\S+/gi, "");
+  cleaned = cleaned.replace(/\b[0-9a-fA-F]{32,}\b/g, "");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (sentences.length === 0) return cleaned.slice(0, maxChars).trim();
+  const limited = sentences.slice(0, maxSentences).join(" ").trim();
+  if (limited.length <= maxChars) return limited;
+  return limited.slice(0, maxChars).replace(/\s+\S*$/, "").trim();
+}
+
+function stripNoisyReadme(input: string): string {
+  if (!input) return "";
+  return input
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\b[0-9a-fA-F]{32,}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function buildHybridPrompt(input: {
   snapshot: ProfileSnapshot;
   breakdown: ScoreBreakdown;
@@ -215,7 +272,7 @@ export async function getGroqRecommendations(
         });
         const body = await response;
         console.log("[AI] Raw response:", JSON.stringify(body).slice(0, 500));
-        const text = sanitizeAiText(extractText(body));
+        const text = normalizeAiOutput(sanitizeAiText(extractText(body)), 3, 400);
         console.log("[AI] Extracted text:", text.slice(0, 300));
 
         let arr: string[] | null = null;
@@ -323,7 +380,7 @@ export async function getGroqRepoSummary(input: {
   const cached = getCachedRepoSummary(cacheKey);
   if (cached) return cached;
 
-  const readmeSnippet = input.readme.slice(0, 2000);
+  const readmeSnippet = stripNoisyReadme(input.readme).slice(0, 800);
   const prompt = [
     "You are a technical writer. Write a concise 2-3 sentence summary of a GitHub repository.",
     "Must include the repository name and description (if available).",
@@ -349,7 +406,7 @@ export async function getGroqRepoSummary(input: {
     top_p: 1,
   });
 
-  const text = sanitizeAiText(extractText(response));
+  const text = normalizeAiOutput(sanitizeAiText(extractText(response)), 3, 380);
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
   const finalText = cleaned.replace(/^"|"$/g, "");
@@ -392,7 +449,7 @@ export async function getGroqRepoHealthSummary(input: {
     top_p: 1,
   });
 
-  const text = sanitizeAiText(extractText(response));
+  const text = normalizeAiOutput(sanitizeAiText(extractText(response)), 2, 260);
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (!cleaned) throw { code: "GROQ_FAILED", message: "Empty summary" };
   const finalText = cleaned.replace(/^"|"$/g, "");

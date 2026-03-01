@@ -334,7 +334,7 @@ export default function RepoDetail({
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans">
-      <div className="max-w-[1100px] mx-auto px-4 md:px-6 py-6 space-y-4">
+      <div className="max-w-[1200px] mx-auto px-4 md:px-6 py-6 space-y-4">
         {/* Top Bar */}
         <div className="flex items-center justify-between pb-4">
           <Button
@@ -349,19 +349,19 @@ export default function RepoDetail({
         </div>
 
         {/* 2:1 grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {/* Left (2x) */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="md:col-span-1 lg:col-span-2 space-y-4">
             {/* Repo header */}
             <Card className="bg-card border border-border/30 shadow-sm rounded-lg">
-              <CardContent className="p-4 space-y-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <CardContent className="p-3 sm:p-4 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <Link href={`/dashboard/${repo.owner?.login ?? owner}`} className="shrink-0">
                       <img
                         src={repo.owner?.avatar_url}
                         alt={repo.owner?.login ?? owner}
-                        className="w-10 h-10 rounded-full border border-border/30"
+                        className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border border-border/30"
                       />
                     </Link>
                     <div>
@@ -372,8 +372,8 @@ export default function RepoDetail({
                 </div>
 
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-xl md:text-2xl font-bold tracking-tight font-mono">{repo.name}</h1>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight font-mono">{repo.name}</h1>
                     <span className="inline-flex items-center gap-1.5 text-[9px] px-1.5 py-0.5 rounded-full border border-border/40 bg-secondary/40 text-secondary-foreground">
                       <span
                         className={[
@@ -390,7 +390,7 @@ export default function RepoDetail({
                     )}
                   </div>
 
-                  <p className="text-muted-foreground max-w-2xl font-sans">
+                  <p className="text-muted-foreground max-w-2xl font-sans text-sm sm:text-base">
                     <Linkify text={repo.description || 'No description provided.'} />
                   </p>
 
@@ -403,7 +403,7 @@ export default function RepoDetail({
                   </div>
 
                   {repo.topics.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
+                  <div className="flex flex-wrap gap-1.5 pt-1">
                       {repo.topics.map(topic => (
                         <span
                           key={topic}
@@ -424,7 +424,7 @@ export default function RepoDetail({
                   </div>
                 )}
 
-                <div className="flex items-center justify-end gap-2 pt-2">
+                <div className="flex flex-wrap items-center justify-start md:justify-end gap-2 pt-2">
                   <Button asChild variant="outline" size="sm" className="rounded-lg gap-2 h-8 px-3 text-xs">
                     <a href={repo.html_url} target="_blank" rel="noopener noreferrer">
                       <ExternalLink className="w-4 h-4" />
@@ -442,9 +442,11 @@ export default function RepoDetail({
                     </PopoverTrigger>
                     <PopoverContent align="end" className="w-48 p-1 bg-background/70 backdrop-blur border border-border/50">
                       <div className="flex flex-col">
-                        <button
+                        <Button
                           type="button"
-                          className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-[10px] hover:bg-secondary/40 font-sans text-left"
+                          variant="ghost"
+                          size="sm"
+                          className="w-full justify-between gap-2 px-2 py-1 text-[10px] font-sans"
                           onClick={() => copyToClipboard('https')}
                         >
                           <span className="flex items-center gap-2">
@@ -452,11 +454,13 @@ export default function RepoDetail({
                             Copy HTTPS
                           </span>
                           {copied === 'https' ? <Check className="w-3.5 h-3.5" /> : <span className="text-muted-foreground">↵</span>}
-                        </button>
+                        </Button>
 
-                        <button
+                        <Button
                           type="button"
-                          className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-[10px] hover:bg-secondary/40 font-sans text-left"
+                          variant="ghost"
+                          size="sm"
+                          className="w-full justify-between gap-2 px-2 py-1 text-[10px] font-sans"
                           onClick={() => copyToClipboard('ssh')}
                         >
                           <span className="flex items-center gap-2">
@@ -464,7 +468,7 @@ export default function RepoDetail({
                             Copy SSH
                           </span>
                           {copied === 'ssh' ? <Check className="w-3.5 h-3.5" /> : <span className="text-muted-foreground">↵</span>}
-                        </button>
+                        </Button>
                       </div>
                     </PopoverContent>
                   </Popover>
@@ -474,12 +478,12 @@ export default function RepoDetail({
 
             {/* Summary */}
             <Card className="bg-card border border-border/30 shadow-sm rounded-lg">
-              <CardHeader className="px-5 py-3 border-b border-border/30">
+              <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
                   Repository summary
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-4">
+              <CardContent className="p-3 sm:p-4">
                 {readmeLoading ? (
                   <Skeleton className="h-[140px] rounded-lg" />
                 ) : readmeError ? (
@@ -506,13 +510,13 @@ export default function RepoDetail({
 
             {/* Top contributors */}
             <Card className="bg-card border border-border/30 shadow-sm rounded-lg">
-              <CardHeader className="px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between gap-3">
+              <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between gap-3">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
                   Top contributors
                 </CardTitle>
                 <div className="text-[10px] text-muted-foreground font-sans">Top 5 in last 30d</div>
               </CardHeader>
-              <CardContent className="p-4 space-y-3">
+              <CardContent className="p-3 sm:p-4 space-y-3">
                 {analytics.contributorsTop.length === 0 ? (
                   <div className="text-xs text-muted-foreground font-sans">No contributor data.</div>
                 ) : (
@@ -527,7 +531,7 @@ export default function RepoDetail({
                           )}
                           <div className="flex items-center gap-3 min-w-0">
                             <Link href={`/dashboard/${c.login}`} className="shrink-0">
-                              <img src={c.avatar_url} alt={c.login} className="w-8 h-8 rounded-full border border-border/30" />
+                              <img src={c.avatar_url} alt={c.login} className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border border-border/30" />
                             </Link>
                             <div className="min-w-0">
                               <div className="font-sans text-[11px] truncate">{c.login}</div>
@@ -548,22 +552,22 @@ export default function RepoDetail({
 
             {/* Commit velocity */}
             <Card className="bg-card border border-border/30 shadow-sm rounded-lg">
-              <CardHeader className="px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between gap-3">
+              <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between gap-3">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
                   Commit velocity
                 </CardTitle>
-                <div className="text-[10px] text-muted-foreground font-mono tabular-nums">
+                <div className="text-[10px] text-muted-foreground font-mono tabular-nums text-right">
                   Total <span className="text-foreground">{totalCommits30d}</span> · avg/day{' '}
                   <span className="text-foreground">{averageCommitsPerDay}</span>
                 </div>
               </CardHeader>
-              <CardContent className="p-4 space-y-3">
+              <CardContent className="p-3 sm:p-4 space-y-3">
                 {analytics.commitSeries30d.every(p => p.commits === 0) ? (
-                  <div className="h-[200px] flex items-center justify-center text-xs text-muted-foreground font-sans">
+                  <div className="h-[160px] sm:h-[200px] flex items-center justify-center text-xs text-muted-foreground font-sans">
                     No commit data available.
                   </div>
                 ) : (
-                  <div className="relative h-[200px]">
+                  <div className="relative h-[160px] sm:h-[200px]">
                     <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-card to-transparent" />
                     <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-card to-transparent" />
                     <ResponsiveContainer width="100%" height="100%">
@@ -575,15 +579,15 @@ export default function RepoDetail({
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.3} />
-                        <XAxis
-                          dataKey="date"
-                          tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10, fontFamily: 'var(--font-sans)' }}
-                          axisLine={false}
-                          tickLine={false}
-                          interval={6}
-                          tickMargin={10}
-                          tickFormatter={(value: string) => format(new Date(value), 'MMM d')}
-                        />
+                          <XAxis
+                            dataKey="date"
+                            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10, fontFamily: 'var(--font-sans)' }}
+                            axisLine={false}
+                            tickLine={false}
+                            interval={6}
+                            tickMargin={10}
+                            tickFormatter={(value: string) => format(new Date(value), 'MMM d')}
+                          />
                         <RechartsTooltip
                           cursor={{ stroke: 'hsl(var(--border))' }}
                           contentStyle={{
@@ -623,14 +627,14 @@ export default function RepoDetail({
           </div>
 
           {/* Right (1x) */}
-          <div className="lg:col-span-1 space-y-4 lg:sticky lg:top-6 self-start">
+          <div className="md:col-span-1 lg:col-span-1 space-y-4 lg:sticky lg:top-6 self-start">
             <Card className="bg-card border border-border/30 shadow-sm rounded-lg">
-              <CardHeader className="px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between gap-3">
+              <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30 flex flex-row items-center justify-between gap-3">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
                   Repo health
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-4 space-y-3">
+              <CardContent className="p-3 sm:p-4 space-y-3">
                 <div className="flex items-end justify-between gap-3">
                   <div className="text-2xl font-semibold font-mono tabular-nums">{analytics.health.scorePercent}%</div>
                   <div className="text-[9px] inline-flex px-1.5 py-0.5 rounded-full border border-border/40 bg-secondary/20 font-sans">
@@ -654,7 +658,7 @@ export default function RepoDetail({
                     <Skeleton className="h-3 w-3/5" />
                   </div>
                 ) : healthSummary ? (
-                  <div className="text-[10px] text-muted-foreground/80 font-sans leading-snug">{healthSummary}</div>
+                  <div className="text-[10px] sm:text-[11px] text-muted-foreground/80 font-sans leading-snug">{healthSummary}</div>
                 ) : (
                   <div className="text-[10px] text-muted-foreground/80 font-sans leading-snug">AI summary unavailable.</div>
                 )}
@@ -665,12 +669,12 @@ export default function RepoDetail({
             </Card>
 
             <Card className="bg-card border border-border/30 shadow-sm rounded-lg hidden lg:block">
-              <CardHeader className="px-5 py-3 border-b border-border/30">
+              <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
                   Statistics
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-4 space-y-3 text-xs">
+              <CardContent className="p-3 sm:p-4 space-y-3 text-xs">
                 <Stat icon={Users} label="Contributors" value={analytics.contributorsCount.toLocaleString()} />
                 <Stat icon={Calendar} label="Created" value={format(new Date(repo.created_at), 'MMM d, yyyy')} />
                 <Stat
@@ -683,12 +687,12 @@ export default function RepoDetail({
             </Card>
 
             <Card className="bg-card border border-border/30 shadow-sm rounded-lg">
-              <CardHeader className="px-5 py-3 border-b border-border/30">
+              <CardHeader className="px-4 sm:px-5 py-3 border-b border-border/30">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-sans">
                   Language distribution
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-4 space-y-3">
+              <CardContent className="p-3 sm:p-4 space-y-3">
                 {languageRows.length === 0 ? (
                   <div className="text-xs text-muted-foreground font-sans">No language data.</div>
                 ) : (
@@ -826,10 +830,15 @@ function TrendChip({ trend }: { trend: { direction: 'up' | 'down' | 'flat'; perc
         ? 'border-rose-500/40'
         : 'border-border/40'
   return (
-    <span className={['inline-flex items-center gap-1 rounded-full border bg-secondary/20 px-2 py-1 text-[10px] font-mono', borderTone].join(' ')}>
+    <span
+      className={[
+        'inline-flex items-center gap-1 rounded-full border bg-secondary/20 px-2 py-1 text-[10px] font-mono whitespace-nowrap min-w-fit',
+        borderTone,
+      ].join(' ')}
+    >
       <Icon className={['w-3 h-3', tone].join(' ')} />
       <span className={tone}>{trend.percent}%</span>
-      <span className="ml-1 text-[9px] text-muted-foreground">{trend.commits} commits</span>
+      <span className="ml-1 text-[9px] text-muted-foreground whitespace-nowrap">{trend.commits} commits</span>
     </span>
   )
 }
