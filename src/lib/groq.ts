@@ -177,6 +177,44 @@ function normalizeAiOutput(text: string, maxSentences: number, maxChars: number)
   return limited.slice(0, maxChars).replace(/\s+\S*$/, "").trim();
 }
 
+function normalizeRecommendations(raw: string[] | string): string[] {
+  const normalizeList = (list: string[]) =>
+    list
+      .map((s) => String(s).trim())
+      .map((s) => s.replace(/^[-•\d\.\)\s]+/, "").replace(/^"|"$/g, "").trim())
+      .filter(Boolean)
+      .flatMap((s) => {
+        if (s.length <= 200) return [s];
+        return s.split(/(?<=[.!?])\s+/).slice(0, 2).filter(Boolean);
+      })
+      .map((s) => (s.length > 200 ? s.slice(0, 200).replace(/\s+\S*$/, "").trim() : s))
+      .slice(0, 6);
+
+  if (Array.isArray(raw)) return normalizeList(raw);
+
+  const text = String(raw).trim();
+  if (!text) return [];
+
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return normalizeList(parsed as string[]);
+    } catch {
+      // fall through
+    }
+  }
+
+  if (text.includes('","')) {
+    const items = text
+      .replace(/^\[|\]$/g, "")
+      .split(/"\s*,\s*"/)
+      .map((s) => s.replace(/^"|"$/g, ""));
+    return normalizeList(items);
+  }
+
+  return normalizeList([text]);
+}
+
 function stripNoisyReadme(input: string): string {
   if (!input) return "";
   return input
@@ -316,10 +354,10 @@ export async function getGroqRecommendations(
           return [];
         }
 
-        const normalized = arr
-          .map((s) => s.replace(/^[-•\d\.\)\s]+/, "").trim())
-          .filter(Boolean)
-          .slice(0, 6);
+        let normalized = normalizeRecommendations(arr);
+        if (normalized.length === 1 && normalized[0].startsWith("[") && normalized[0].endsWith("]")) {
+          normalized = normalizeRecommendations(normalized[0]);
+        }
         console.log("[AI] Final parsed recommendations:", normalized);
         setCachedRecommendations(user.login, normalized);
         return normalized;
