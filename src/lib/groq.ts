@@ -26,14 +26,17 @@ function getCachedRecommendations(username: string): string[] | null {
   const key = username.toLowerCase();
   const cached = recommendationCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    const normalized = normalizeRecommendations(cached.data);
+    recommendationCache.set(key, { data: normalized, timestamp: cached.timestamp });
     console.log("[CACHE] Returning cached recommendations for:", username);
-    return cached.data;
+    return normalized;
   }
   return null;
 }
 
 function setCachedRecommendations(username: string, data: string[]): void {
-  recommendationCache.set(username.toLowerCase(), { data, timestamp: Date.now() });
+  const normalized = normalizeRecommendations(data);
+  recommendationCache.set(username.toLowerCase(), { data: normalized, timestamp: Date.now() });
   console.log("[CACHE] Cached recommendations for:", username);
 }
 
@@ -62,6 +65,14 @@ function getCachedRepoSummary(key: string): string | null {
 
 function setCachedRepoSummary(key: string, data: string): void {
   repoSummaryCache.set(key, { data, timestamp: Date.now() });
+}
+
+function buildRepoSummaryCacheKey(owner: string, repoName: string) {
+  return `repo_v2_${owner}/${repoName}`.toLowerCase();
+}
+
+export function clearGroqRepoSummaryCache(owner: string, repoName: string) {
+  repoSummaryCache.delete(buildRepoSummaryCacheKey(owner, repoName));
 }
 
 function getGroqConfig() {
@@ -178,10 +189,19 @@ function normalizeAiOutput(text: string, maxSentences: number, maxChars: number)
 }
 
 function normalizeRecommendations(raw: string[] | string): string[] {
+  const looksLikeSerializedList = (value: string) => /^\s*\[/.test(value) || /"\s*,\s*"/.test(value);
+
   const normalizeList = (list: string[]) =>
     list
       .map((s) => String(s).trim())
-      .map((s) => s.replace(/^[-•\d\.\)\s]+/, "").replace(/^"|"$/g, "").trim())
+      .map((s) =>
+        s
+          .replace(/^[-•\d\.\)\s]+/, "")
+          .replace(/^"|"$/g, "")
+          .replace(/^\[+\s*/, "")
+          .replace(/\s*\]+$/, "")
+          .trim()
+      )
       .filter(Boolean)
       .flatMap((s) => {
         if (s.length <= 200) return [s];
@@ -190,7 +210,16 @@ function normalizeRecommendations(raw: string[] | string): string[] {
       .map((s) => (s.length > 200 ? s.slice(0, 200).replace(/\s+\S*$/, "").trim() : s))
       .slice(0, 6);
 
-  if (Array.isArray(raw)) return normalizeList(raw);
+  if (Array.isArray(raw)) {
+    if (raw.length === 1) {
+      const nested = String(raw[0]).trim();
+      if (looksLikeSerializedList(nested)) {
+        const reparsed = normalizeRecommendations(nested);
+        if (reparsed.length > 0) return reparsed;
+      }
+    }
+    return normalizeList(raw);
+  }
 
   const text = String(raw).trim();
   if (!text) return [];
@@ -204,12 +233,20 @@ function normalizeRecommendations(raw: string[] | string): string[] {
     }
   }
 
-  if (text.includes('","')) {
+  if (/"\s*,\s*"/.test(text)) {
     const items = text
       .replace(/^\[|\]$/g, "")
       .split(/"\s*,\s*"/)
       .map((s) => s.replace(/^"|"$/g, ""));
     return normalizeList(items);
+  }
+
+  if (looksLikeSerializedList(text)) {
+    const quotedItems = [...text.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"/g)]
+      .map((match) => match[1])
+      .filter(Boolean);
+    if (quotedItems.length > 0) return normalizeList(quotedItems);
+    return [];
   }
 
   return normalizeList([text]);
@@ -414,16 +451,19 @@ export async function getGroqRepoSummary(input: {
   const cfg = getGroqConfig();
   if (!cfg.apiKey) throw { code: "MISSING_API_KEY", message: "GROQ_API_KEY not set." };
 
-  const cacheKey = `${input.owner}/${input.repoName}`.toLowerCase();
+  const cacheKey = buildRepoSummaryCacheKey(input.owner, input.repoName);
   const cached = getCachedRepoSummary(cacheKey);
   if (cached) return cached;
 
   const readmeSnippet = stripNoisyReadme(input.readme).slice(0, 800);
   const prompt = [
-    "You are a technical writer. Write a concise 2-3 sentence summary of a GitHub repository.",
-    "Must include the repository name and description (if available).",
-    "Mention one concrete metric (stars, forks, open issues, or last push) and the primary language if provided.",
-    "Return plain text only. No markdown, no bullets, no placeholders, no fragments.",
+    "You are a technical writer.",
+    "Write exactly 2-3 factual sentences summarizing this repository for end users.",
+    "Include repository identity, one concrete metric (stars, forks, open issues, or last push), and the primary language when available.",
+    "Return only the final summary text.",
+    "Do not restate instructions.",
+    "Do not write phrases like: 'Then mention metric', 'That's 2 sentences', or 'Could add third sentence'.",
+    "No markdown, no bullets, no placeholders, no fragments.",
     "Do not include reasoning, analysis, or <think> tags.",
     "",
     `Repository: ${input.owner}/${input.repoName}`,
@@ -439,7 +479,7 @@ export async function getGroqRepoSummary(input: {
   const response = await groq.chat.completions.create({
     messages: [{ role: "user", content: prompt }],
     model: cfg.model,
-    temperature: 0.7,
+    temperature: 0.25,
     max_completion_tokens: 300,
     top_p: 1,
   });

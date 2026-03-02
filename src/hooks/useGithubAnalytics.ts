@@ -20,10 +20,19 @@ interface InitialAnalyticsData {
 }
 
 function normalizeRecommendations(raw: string[] | string): string[] {
+  const looksLikeSerializedList = (value: string) => /^\s*\[/.test(value) || /"\s*,\s*"/.test(value);
+
   const normalizeList = (list: string[]) =>
     list
       .map((s) => String(s).trim())
-      .map((s) => s.replace(/^[-•\d\.\)\s]+/, "").replace(/^"|"$/g, "").trim())
+      .map((s) =>
+        s
+          .replace(/^[-•\d\.\)\s]+/, "")
+          .replace(/^"|"$/g, "")
+          .replace(/^\[+\s*/, "")
+          .replace(/\s*\]+$/, "")
+          .trim()
+      )
       .filter(Boolean)
       .flatMap((s) => {
         if (s.length <= 200) return [s];
@@ -32,7 +41,16 @@ function normalizeRecommendations(raw: string[] | string): string[] {
       .map((s) => (s.length > 200 ? s.slice(0, 200).replace(/\s+\S*$/, "").trim() : s))
       .slice(0, 6);
 
-  if (Array.isArray(raw)) return normalizeList(raw);
+  if (Array.isArray(raw)) {
+    if (raw.length === 1) {
+      const nested = String(raw[0]).trim();
+      if (looksLikeSerializedList(nested)) {
+        const reparsed = normalizeRecommendations(nested);
+        if (reparsed.length > 0) return reparsed;
+      }
+    }
+    return normalizeList(raw);
+  }
 
   const text = String(raw).trim();
   if (!text) return [];
@@ -46,12 +64,20 @@ function normalizeRecommendations(raw: string[] | string): string[] {
     }
   }
 
-  if (text.includes('","')) {
+  if (/"\s*,\s*"/.test(text)) {
     const items = text
       .replace(/^\[|\]$/g, "")
       .split(/"\s*,\s*"/)
       .map((s) => s.replace(/^"|"$/g, ""));
     return normalizeList(items);
+  }
+
+  if (looksLikeSerializedList(text)) {
+    const quotedItems = [...text.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"/g)]
+      .map((match) => match[1])
+      .filter(Boolean);
+    if (quotedItems.length > 0) return normalizeList(quotedItems);
+    return [];
   }
 
   return normalizeList([text]);
@@ -223,8 +249,10 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         // Mark in-flight as early as possible to avoid double runs when effects re-fire quickly.
         recsFetchInFlightRef.current = true;
 
-        const cacheKey = `recs_${user.login}`;
+        const cacheKey = `recs_v2_${user.login}`;
+        const legacyCacheKey = `recs_${user.login}`;
         const cachedData = localStorage.getItem(cacheKey);
+        const legacyCachedData = localStorage.getItem(legacyCacheKey);
 
         // Always compute deterministic deficiencies (for "Why?") even if we use cached recs.
         const activeSnapshot = snapshot ?? buildProfileSnapshot({ user, repos, repoExtras: [] });
@@ -232,13 +260,17 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
         setDeficiencies(deterministic.deficiencies);
         if (process.env.NODE_ENV !== "production") debugCounters.current.deterministicRecs += 1;
 
-        if (cachedData && recRetryTrigger === 0) {
+        if ((cachedData || legacyCachedData) && recRetryTrigger === 0) {
           try {
-            const { recs, timestamp } = JSON.parse(cachedData);
+            const source = cachedData ?? legacyCachedData;
+            const { recs, timestamp } = JSON.parse(source as string);
             const cacheAge = Date.now() - timestamp;
             if (cacheAge < CLIENT_CACHE_TTL_MS) {
+              const normalizedCached = normalizeRecommendations(recs ?? []);
               console.log('[CLIENT CACHE] Using cached recommendations for new profile');
-              setRecommendations(recs);
+              setRecommendations(normalizedCached);
+              localStorage.setItem(cacheKey, JSON.stringify({ recs: normalizedCached, timestamp: Date.now() }));
+              if (legacyCachedData) localStorage.removeItem(legacyCacheKey);
               setLoadingRecs(false);
               return;
             }
@@ -311,7 +343,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
           const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
           // Surface rate limit info without throwing to allow UI to show manual retry
           if (!ignore) {
-            const fallbackRecs = Array.isArray(errorData.recommendations) ? errorData.recommendations : [];
+            const fallbackRecs = Array.isArray(errorData.recommendations) ? normalizeRecommendations(errorData.recommendations) : [];
             setRecError(errorData.message || `HTTP ${response.status}`);
             setIsRecRateLimited(errorData.error === 'RATE_LIMIT');
             setRecRetryAfter(typeof errorData.retryAfter === 'number' ? errorData.retryAfter : null);
@@ -319,7 +351,7 @@ export function useGithubAnalytics(username: string | undefined, initial?: Initi
               setRecommendations(fallbackRecs);
               localStorage.setItem(cacheKey, JSON.stringify({ recs: fallbackRecs, timestamp: Date.now() }));
             } else {
-              setRecommendations([]);
+              setRecommendations(deterministicTexts);
             }
           }
           return;
