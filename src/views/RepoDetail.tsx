@@ -104,10 +104,7 @@ export default function RepoDetail({
   const healthRequestRef = useRef<{ key: string | null; inFlight: boolean }>({ key: null, inFlight: false })
   const summaryAttemptRef = useRef<string | null>(null)
   const healthAttemptRef = useRef<string | null>(null)
-<<<<<<< HEAD
-=======
   const summaryRetryAttemptsRef = useRef(0)
->>>>>>> develop
 
   useEffect(() => {
     let isMounted = true
@@ -254,11 +251,7 @@ export default function RepoDetail({
     const requestKey = `${repo.full_name}:${readmeText.length}:${languageRows.map(row => row.language).join(',')}:${repo.stargazers_count}:${repo.forks_count}:${repo.open_issues_count}:${repo.pushed_at}:retry${summaryRetryTrigger}`
     if (summaryRequestRef.current.inFlight) return
     if (summaryAttemptRef.current === requestKey) return
-<<<<<<< HEAD
-    if (summaryRequestRef.current.key === requestKey && summaryText) {
-=======
     if (summaryRequestRef.current.key === requestKey && summaryText && !summaryNote && summaryRetryAfter === null) {
->>>>>>> develop
       setSummaryLoading(false)
       return
     }

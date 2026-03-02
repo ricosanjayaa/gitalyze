@@ -20,12 +20,6 @@ interface InitialAnalyticsData {
 }
 
 function normalizeRecommendations(raw: string[] | string): string[] {
-<<<<<<< HEAD
-  const normalizeList = (list: string[]) =>
-    list
-      .map((s) => String(s).trim())
-      .map((s) => s.replace(/^[-•\d\.\)\s]+/, "").replace(/^"|"$/g, "").trim())
-=======
   const looksLikeSerializedList = (value: string) => /^\s*\[/.test(value) || /"\s*,\s*"/.test(value);
 
   const normalizeList = (list: string[]) =>
@@ -39,7 +33,6 @@ function normalizeRecommendations(raw: string[] | string): string[] {
           .replace(/\s*\]+$/, "")
           .trim()
       )
->>>>>>> develop
       .filter(Boolean)
       .flatMap((s) => {
         if (s.length <= 200) return [s];
@@ -48,9 +41,6 @@ function normalizeRecommendations(raw: string[] | string): string[] {
       .map((s) => (s.length > 200 ? s.slice(0, 200).replace(/\s+\S*$/, "").trim() : s))
       .slice(0, 6);
 
-<<<<<<< HEAD
-  if (Array.isArray(raw)) return normalizeList(raw);
-=======
   if (Array.isArray(raw)) {
     if (raw.length === 1) {
       const nested = String(raw[0]).trim();
@@ -61,7 +51,6 @@ function normalizeRecommendations(raw: string[] | string): string[] {
     }
     return normalizeList(raw);
   }
->>>>>>> develop
 
   const text = String(raw).trim();
   if (!text) return [];
@@ -75,11 +64,7 @@ function normalizeRecommendations(raw: string[] | string): string[] {
     }
   }
 
-<<<<<<< HEAD
-  if (text.includes('","')) {
-=======
   if (/"\s*,\s*"/.test(text)) {
->>>>>>> develop
     const items = text
       .replace(/^\[|\]$/g, "")
       .split(/"\s*,\s*"/)
@@ -87,8 +72,6 @@ function normalizeRecommendations(raw: string[] | string): string[] {
     return normalizeList(items);
   }
 
-<<<<<<< HEAD
-=======
   if (looksLikeSerializedList(text)) {
     const quotedItems = [...text.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"/g)]
       .map((match) => match[1])
@@ -97,7 +80,6 @@ function normalizeRecommendations(raw: string[] | string): string[] {
     return [];
   }
 
->>>>>>> develop
   return normalizeList([text]);
 }
 
