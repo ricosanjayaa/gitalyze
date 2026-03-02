@@ -39,6 +39,9 @@ import {
   XAxis,
 } from 'recharts'
 
+const SUMMARY_MAX_AUTO_RETRIES = 2
+const SUMMARY_DEFAULT_RETRY_AFTER_SECONDS = 10
+
 type RepoAnalytics = {
   repo: {
     name: string
@@ -90,6 +93,8 @@ export default function RepoDetail({
   const [summaryText, setSummaryText] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [summaryNote, setSummaryNote] = useState<string | null>(null)
+  const [summaryRetryAfter, setSummaryRetryAfter] = useState<number | null>(null)
+  const [summaryRetryTrigger, setSummaryRetryTrigger] = useState(0)
   const [healthSummary, setHealthSummary] = useState('')
   const [healthSummaryLoading, setHealthSummaryLoading] = useState(true)
   const [healthSummaryNote, setHealthSummaryNote] = useState<string | null>(null)
@@ -99,6 +104,10 @@ export default function RepoDetail({
   const healthRequestRef = useRef<{ key: string | null; inFlight: boolean }>({ key: null, inFlight: false })
   const summaryAttemptRef = useRef<string | null>(null)
   const healthAttemptRef = useRef<string | null>(null)
+<<<<<<< HEAD
+=======
+  const summaryRetryAttemptsRef = useRef(0)
+>>>>>>> develop
 
   useEffect(() => {
     let isMounted = true
@@ -147,6 +156,15 @@ export default function RepoDetail({
     return () => {
       isMounted = false
     }
+  }, [owner, repoName])
+
+  useEffect(() => {
+    summaryRetryAttemptsRef.current = 0
+    summaryAttemptRef.current = null
+    summaryRequestRef.current = { key: null, inFlight: false }
+    setSummaryRetryAfter(null)
+    setSummaryRetryTrigger(0)
+    setSummaryNote(null)
   }, [owner, repoName])
 
   const repo = analytics?.repo
@@ -211,11 +229,36 @@ export default function RepoDetail({
   }, [repo, readmeText, languageRows])
 
   useEffect(() => {
+    if (summaryRetryAfter === null || summaryRetryAfter <= 0) return
+    const timer = window.setTimeout(() => {
+      setSummaryRetryAfter((prev) => (prev !== null ? prev - 1 : null))
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [summaryRetryAfter])
+
+  useEffect(() => {
+    if (summaryRetryAfter !== 0) return
+    setSummaryRetryAfter(null)
+    setSummaryRetryTrigger((prev) => prev + 1)
+  }, [summaryRetryAfter])
+
+  const summaryDisplayNote = useMemo(() => {
+    if (summaryRetryAfter !== null && summaryRetryAfter > 0) {
+      return `AI summary fallback, retrying in ${summaryRetryAfter}s`
+    }
+    return summaryNote
+  }, [summaryNote, summaryRetryAfter])
+
+  useEffect(() => {
     if (!repo || readmeLoading) return
-    const requestKey = `${repo.full_name}:${readmeText.length}:${languageRows.map(row => row.language).join(',')}:${repo.stargazers_count}:${repo.forks_count}:${repo.open_issues_count}:${repo.pushed_at}`
+    const requestKey = `${repo.full_name}:${readmeText.length}:${languageRows.map(row => row.language).join(',')}:${repo.stargazers_count}:${repo.forks_count}:${repo.open_issues_count}:${repo.pushed_at}:retry${summaryRetryTrigger}`
     if (summaryRequestRef.current.inFlight) return
     if (summaryAttemptRef.current === requestKey) return
+<<<<<<< HEAD
     if (summaryRequestRef.current.key === requestKey && summaryText) {
+=======
+    if (summaryRequestRef.current.key === requestKey && summaryText && !summaryNote && summaryRetryAfter === null) {
+>>>>>>> develop
       setSummaryLoading(false)
       return
     }
@@ -225,6 +268,7 @@ export default function RepoDetail({
         summaryRequestRef.current = { key: requestKey, inFlight: true }
         summaryAttemptRef.current = requestKey
         setSummaryLoading(true)
+        setSummaryRetryAfter(null)
         setSummaryNote(null)
         const res = await fetch('/api/ai/repo-summary', {
           method: 'POST',
@@ -243,13 +287,45 @@ export default function RepoDetail({
         })
 
         if (!res.ok) throw new Error('Failed to generate AI summary')
-        const data = (await res.json()) as { summary?: string; fallback?: boolean; message?: string }
+        const data = (await res.json()) as {
+          summary?: string
+          fallback?: boolean
+          message?: string
+          retryAfter?: number
+          retryable?: boolean
+          fallbackReason?: string
+        }
         setSummaryText(data.summary ?? deterministicSummary)
-        if (data.fallback && data.message) {
-          setSummaryNote(data.message)
+        if (data.fallback) {
+          const isRetryable = data.retryable !== false
+          const retryAfter = typeof data.retryAfter === 'number' && data.retryAfter > 0
+            ? Math.floor(data.retryAfter)
+            : SUMMARY_DEFAULT_RETRY_AFTER_SECONDS
+
+          if (isRetryable && summaryRetryAttemptsRef.current < SUMMARY_MAX_AUTO_RETRIES) {
+            summaryRetryAttemptsRef.current += 1
+            setSummaryRetryAfter(retryAfter)
+          } else {
+            setSummaryRetryAfter(null)
+          }
+
+          if (data.message) {
+            setSummaryNote(data.message)
+          } else {
+            setSummaryNote('AI summary fallback')
+          }
+        } else {
+          setSummaryRetryAfter(null)
+          setSummaryNote(null)
         }
       } catch (err: any) {
         setSummaryText(deterministicSummary)
+        if (summaryRetryAttemptsRef.current < SUMMARY_MAX_AUTO_RETRIES) {
+          summaryRetryAttemptsRef.current += 1
+          setSummaryRetryAfter(SUMMARY_DEFAULT_RETRY_AFTER_SECONDS)
+        } else {
+          setSummaryRetryAfter(null)
+        }
         setSummaryNote(err?.message || 'AI summary unavailable')
       } finally {
         summaryRequestRef.current = { key: requestKey, inFlight: false }
@@ -258,7 +334,7 @@ export default function RepoDetail({
     }
 
     run()
-  }, [repo, owner, readmeText, languageRows, deterministicSummary, readmeLoading, summaryText])
+  }, [repo, owner, readmeText, languageRows, deterministicSummary, readmeLoading, summaryText, summaryNote, summaryRetryAfter, summaryRetryTrigger])
 
   useEffect(() => {
     if (!analytics || !repo) return
@@ -506,7 +582,7 @@ export default function RepoDetail({
                   <Skeleton className="h-[140px] rounded-lg" />
                 ) : readmeError ? (
                   <div className="text-xs text-muted-foreground font-sans">{readmeError}</div>
-                ) : summaryLoading ? (
+                ) : summaryLoading && !summaryText ? (
                   <div className="space-y-2">
                     <Skeleton className="h-4 w-4/5" />
                     <Skeleton className="h-4 w-3/5" />
@@ -518,8 +594,8 @@ export default function RepoDetail({
                     <div className="text-sm leading-relaxed font-sans text-foreground/90">
                       <p>{summaryText}</p>
                     </div>
-                    {summaryNote && (
-                      <div className="text-[10px] text-muted-foreground/80 font-sans leading-snug">{summaryNote}</div>
+                    {summaryDisplayNote && (
+                      <div className="text-[10px] text-muted-foreground/80 font-sans leading-snug">{summaryDisplayNote}</div>
                     )}
                   </div>
                 )}

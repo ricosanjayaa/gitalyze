@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getGroqRepoSummary } from "@/lib/groq";
+import { clearGroqRepoSummaryCache, getGroqRepoSummary } from "@/lib/groq";
 
 type SummaryRequest = {
   owner: string;
@@ -12,6 +12,8 @@ type SummaryRequest = {
   openIssues?: number;
   lastPush?: string;
 };
+
+const DEFAULT_RETRY_AFTER_SECONDS = 10;
 
 function buildDeterministicSummary(input: SummaryRequest) {
   const name = input.repoName || "Repository";
@@ -37,11 +39,44 @@ function buildDeterministicSummary(input: SummaryRequest) {
   return sentences.join(" ");
 }
 
-function isValidSummary(summary: string, repoName: string) {
+function countSentences(text: string) {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean).length;
+}
+
+function looksLikePromptLeak(summary: string) {
+  const text = summary.toLowerCase();
+  return [
+    /then mention\s+metric/.test(text),
+    /that's\s+\d+\s+sentences?/.test(text),
+    /could add\s+(a\s+)?third sentence/.test(text),
+    /that'?s description\.?/.test(text),
+    /return plain text only/.test(text),
+    /no markdown/.test(text),
+  ].some(Boolean);
+}
+
+function isValidSummary(summary: string, owner: string, repoName: string) {
   const normalized = summary.trim();
   if (normalized.length < 40) return false;
   if (!normalized.endsWith(".") && !normalized.endsWith("!") && !normalized.endsWith("?")) return false;
-  if (repoName && !normalized.toLowerCase().includes(repoName.toLowerCase())) return false;
+  if (looksLikePromptLeak(normalized)) return false;
+
+  const sentenceCount = countSentences(normalized);
+  if (sentenceCount < 2 || sentenceCount > 3) return false;
+
+  const hasMetric = /(stars?|forks?|open\s+issues?|last\s+(updated|push|pushed))/i.test(normalized);
+  if (!hasMetric) return false;
+
+  const lower = normalized.toLowerCase();
+  const ownerLower = (owner || "").toLowerCase();
+  const repoLower = (repoName || "").toLowerCase();
+  const fullName = ownerLower && repoLower ? `${ownerLower}/${repoLower}` : "";
+  const hasIdentity = (repoLower && lower.includes(repoLower)) || (fullName && lower.includes(fullName));
+  if (!hasIdentity) return false;
+
   return true;
 }
 
@@ -94,16 +129,38 @@ export async function POST(req: Request) {
       lastPush: body.lastPush ?? "",
     });
     const cleaned = summary || "";
-    if (!isValidSummary(cleaned, body.repoName)) {
-      return NextResponse.json({ summary: deterministic, fallback: true, message: "AI summary fallback" });
+    if (!isValidSummary(cleaned, body.owner || "", body.repoName)) {
+      clearGroqRepoSummaryCache(body.owner || "", body.repoName);
+      return NextResponse.json({
+        summary: deterministic,
+        fallback: true,
+        message: "AI summary fallback",
+        retryAfter: DEFAULT_RETRY_AFTER_SECONDS,
+        retryable: false,
+        fallbackReason: "validation_failed",
+      });
     }
     return NextResponse.json({ summary: cleaned });
   } catch (error: any) {
     console.error(error);
+    const retryAfter =
+      typeof error?.details?.retryAfter === "number" && error.details.retryAfter > 0
+        ? error.details.retryAfter
+        : DEFAULT_RETRY_AFTER_SECONDS;
+    const isRateLimit = error?.status === 429;
+    const isRetryable = isRateLimit || (typeof error?.status === "number" ? error.status >= 500 : true);
+
+    if (!isRetryable) {
+      clearGroqRepoSummaryCache(body.owner || "", body.repoName);
+    }
+
     return NextResponse.json({
       summary: deterministic,
       fallback: true,
       message: "AI summary unavailable",
+      retryAfter,
+      retryable: isRetryable,
+      fallbackReason: isRateLimit ? "rate_limit" : isRetryable ? "upstream_error" : "validation_failed",
     });
   }
 }
